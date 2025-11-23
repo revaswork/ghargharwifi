@@ -1,0 +1,90 @@
+{
+  "floors": [
+    {
+      "level": 7,
+      "name": "7th Floor - Library",
+      "rooms": [
+        { "name": "Library", "x": 40, "y": 30, "width": 820, "height": 180 },
+        { "name": "Study Area", "x": 40, "y": 220, "width": 820, "height": 160 },
+        { "name": "Exit A", "x": 880, "y": 30, "width": 120, "height": 150 },
+        { "name": "Exit B", "x": 880, "y": 220, "width": 120, "height": 150 }
+      ]
+    },
+
+    {
+      "level": 6,
+      "name": "6th Floor - Staff",
+      "rooms": [
+        { "name": "Staff Room A", "x": 40, "y": 30, "width": 470, "height": 350 },
+        { "name": "Staff Room B", "x": 540, "y": 30, "width": 470, "height": 350 },
+        { "name": "Exit A", "x": 1010, "y": 30, "width": 80, "height": 150 },
+        { "name": "Exit B", "x": 1010, "y": 230, "width": 80, "height": 150 }
+      ]
+    },
+
+    {
+      "level": 5,
+      "name": "5th Floor - Classrooms",
+      "rooms": [
+        { "name": "Class 501", "x": 40, "y": 30, "width": 300, "height": 160 },
+        { "name": "Class 502", "x": 360, "y": 30, "width": 300, "height": 160 },
+        { "name": "Class 503", "x": 680, "y": 30, "width": 300, "height": 160 },
+        { "name": "Class 504", "x": 40, "y": 200, "width": 300, "height": 160 },
+        { "name": "Class 505", "x": 360, "y": 200, "width": 300, "height": 160 },
+        { "name": "Class 506", "x": 680, "y": 200, "width": 300, "height": 160 }
+      ]
+    },
+
+    {
+      "level": 4,
+      "name": "4th Floor - Classrooms + Success Centre",
+      "rooms": [
+        { "name": "Class 401", "x": 40, "y": 30, "width": 260, "height": 160 },
+        { "name": "Class 402", "x": 320, "y": 30, "width": 260, "height": 160 },
+        { "name": "Class 403", "x": 600, "y": 30, "width": 260, "height": 160 },
+        { "name": "Class 404", "x": 40, "y": 210, "width": 260, "height": 160 },
+        { "name": "Class 405", "x": 320, "y": 210, "width": 260, "height": 160 },
+        { "name": "Success Centre (Right)", "x": 600, "y": 210, "width": 260, "height": 160 }
+      ]
+    },
+
+    {
+      "level": 3,
+      "name": "3rd Floor - Classrooms",
+      "rooms": [
+        { "name": "Class 301", "x": 40, "y": 30, "width": 300, "height": 160 },
+        { "name": "Class 302", "x": 360, "y": 30, "width": 300, "height": 160 },
+        { "name": "Class 303", "x": 680, "y": 30, "width": 300, "height": 160 },
+        { "name": "Class 304", "x": 40, "y": 200, "width": 300, "height": 160 },
+        { "name": "Class 305", "x": 360, "y": 200, "width": 300, "height": 160 },
+        { "name": "Class 306", "x": 680, "y": 200, "width": 300, "height": 160 }
+      ]
+    },
+
+    {
+      "level": 2,
+      "name": "2nd Floor - Classrooms",
+      "rooms": [
+        { "name": "Class 201", "x": 40, "y": 30, "width": 300, "height": 160 },
+        { "name": "Class 202", "x": 360, "y": 30, "width": 300, "height": 160 },
+        { "name": "Class 203", "x": 680, "y": 30, "width": 300, "height": 160 },
+        { "name": "Class 204", "x": 40, "y": 200, "width": 300, "height": 160 },
+        { "name": "Class 205", "x": 360, "y": 200, "width": 300, "height": 160 },
+        { "name": "Class 206", "x": 680, "y": 200, "width": 300, "height": 160 }
+      ]
+    },
+
+    {
+      "level": 1,
+      "name": "1st Floor - Labs & Canteen",
+      "rooms": [
+        { "name": "Lab A", "x": 40, "y": 30, "width": 420, "height": 260 },
+        { "name": "Lab B", "x": 480, "y": 30, "width": 420, "height": 260 },
+        { "name": "Canteen (Right)", "x": 920, "y": 30, "width": 240, "height": 260 },
+        { "name": "Corridor (center)", "x": 40, "y": 310, "width": 1120, "height": 120 }
+      ]
+    }
+  ],
+
+  "canvas": { "width": 1200, "floorHeight": 460, "margin": 20 }
+}

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>WiFi Load Balancing — Live Multi-Floor Visualization</title>
+
+    <!-- D3 -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        body {
+            background: #111;
+            color: white;
+            font-family: Arial, sans-serif;
+            margin: 0;
+        }
+        header {
+            text-align: center;
+            padding: 12px 0;
+            background: #0d0d0d;
+            border-bottom: 1px solid #222;
+            font-size: 20px;
+        }
+
+        #canvas {
+            width: 100%;
+            height: calc(100vh - 60px);
+            overflow: auto;
+        }
+
+        svg {
+            background: #141414;
+            display: block;
+        }
+
+        .floor-box {
+            fill: #0c0c0c;
+            stroke: #222;
+            stroke-width: 1;
+        }
+
+        .room-rect {
+            fill: #111;
+            stroke: #2b2b2b;
+            stroke-width: 1;
+        }
+
+        .room-label {
+            fill: #ddd;
+            font-size: 12px;
+        }
+
+        .user {
+            fill: cyan;
+            stroke: #094646;
+            stroke-width: 0.5;
+        }
+
+        .ap-label {
+            fill: white;
+            font-size: 12px;
+            text-anchor: middle;
+            pointer-events: none;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: #222;
+            color: white;
+            padding: 8px;
+            border-radius: 5px;
+            pointer-events: none;
+            opacity: 0;
+            border: 1px solid #444;
+        }
+
+        .legend {
+            position: fixed;
+            right: 15px;
+            top: 80px;
+            background: rgba(0,0,0,0.45);
+            padding: 10px;
+            color: white;
+            border-radius: 6px;
+            border: 1px solid #222;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+
+<header>WiFi Load Balancing — Live Multi-Floor Visualization</header>
+
+<div id="canvas"></div>
+<div id="tooltip" class="tooltip"></div>
+
+<div class="legend">
+    <b>Legend</b><br><br>
+    ● <span style="color:#66ff66;">AP (low load)</span><br>
+    ● <span style="color:#ffb84d;">AP (medium load)</span><br>
+    ● <span style="color:#ff4d4d;">AP (high load)</span><br>
+    ● <span style="color:cyan;">Users</span><br><br>
+    Hover for details<br>
+</div>
+
+<script>
+/* -----------------------------------------------------------
+   1. Load Static Layout Only
+------------------------------------------------------------*/
+let LAYOUT = null;
+
+async function loadLayout() {
+    LAYOUT = await fetch('./data/campus_layout.json').then(r => r.json());
+}
+
+/* -----------------------------------------------------------
+   2. Create SVG + Zoom
+------------------------------------------------------------*/
+let svg, svgGroup, tooltip;
+
+function initSVG() {
+    const canvasWidth = LAYOUT.canvas.width;
+    const floorHeight = LAYOUT.canvas.floorHeight;
+    const margin = LAYOUT.canvas.margin;
+    const totalHeight = LAYOUT.floors.length * (floorHeight + margin) + margin;
+
+    svg = d3.select("#canvas")
+        .append("svg")
+        .attr("width", canvasWidth + 40)
+        .attr("height", totalHeight);
+
+    svgGroup = svg.append("g");
+    tooltip = d3.select("#tooltip");
+
+    const zoom = d3.zoom()
+        .scaleExtent([0.4, 3])
+        .on("zoom", (event) => svgGroup.attr("transform", event.transform));
+
+    svg.call(zoom);
+}
+
+/* -----------------------------------------------------------
+   3. Draw Floors / Rooms (Static Layout)
+------------------------------------------------------------*/
+function drawStaticLayout() {
+    const floors = LAYOUT.floors.slice().sort((a,b) => b.level - a.level);
+
+    const margin = LAYOUT.canvas.margin;
+    const floorHeight = LAYOUT.canvas.floorHeight;
+    const canvasWidth = LAYOUT.canvas.width;
+
+    floors.forEach((floor, idx) => {
+        const floorTop = margin + idx * (floorHeight + margin);
+
+        svgGroup.append("rect")
+            .attr("class", "floor-box")
+            .attr("x", margin)
+            .attr("y", floorTop)
+            .attr("width", canvasWidth - margin*2)
+            .attr("height", floorHeight);
+
+        svgGroup.append("text")
+            .attr("x", margin + 12)
+            .attr("y", floorTop + 20)
+            .attr("fill", "white")
+            .attr("font-size", 14)
+            .text(`Level ${floor.level} — ${floor.name}`);
+
+        (floor.rooms || []).forEach(room => {
+            const x = room.x + margin;
+            const y = floorTop + room.y;
+
+            svgGroup.append("rect")
+                .attr("class", "room-rect")
+                .attr("x", x)
+                .attr("y", y)
+                .attr("width", room.width)
+                .attr("height", room.height)
+                .attr("opacity", 0.6);
+
+            svgGroup.append("text")
+                .attr("x", x + 8)
+                .attr("y", y + 16)
+                .attr("class", "room-label")
+                .text(room.name);
+        });
+    });
+}
+
+/* -----------------------------------------------------------
+   Convert local coords to global coords
+------------------------------------------------------------*/
+function toGlobal(floorLevel, room, lx, ly) {
+    const floors = LAYOUT.floors.slice().sort((a,b) => b.level - a.level);
+    const index = floors.findIndex(f => f.level === floorLevel);
+
+    const margin = LAYOUT.canvas.margin;
+    const floorHeight = LAYOUT.canvas.floorHeight;
+
+    const top = margin + index * (floorHeight + margin);
+
+    return {
+        x: room.x + margin + lx,
+        y: top + room.y + ly
+    };
+}
+
+/* -----------------------------------------------------------
+   4. Dynamic Redraw Based on Backend State
+------------------------------------------------------------*/
+function redrawState(state) {
+    const aps = state.aps;
+    const users = state.clients;
+
+    svgGroup.selectAll(".ap-node").remove();
+    svgGroup.selectAll(".user-node").remove();
+    svgGroup.selectAll(".user-line").remove();
+    svgGroup.selectAll(".floor-count").remove();
+
+    /* --- Compute client counts based on assigned_ap --- */
+    aps.forEach(ap => ap.client_count = 0);
+    users.forEach(u => {
+        if (u.assigned_ap) {
+            const ap = aps.find(a => a.id === u.assigned_ap);
+            if (ap) ap.client_count++;
+        }
+    });
+
+    /* --- APs --- */
+    const apGroup = svgGroup.selectAll(".ap-node")
+        .data(aps)
+        .enter()
+        .append("g")
+        .attr("class", "ap-node")
+        .each(function(d) {
+            const floor = LAYOUT.floors.find(f => f.level === d.floor);
+            const room = floor.rooms.find(r => r.name.toLowerCase() === d.room.toLowerCase());
+            const pos = toGlobal(d.floor, room, room.width/2, room.height/2);
+            d._gx = pos.x;
+            d._gy = pos.y;
+        })
+        .attr("transform", d => `translate(${d._gx},${d._gy})`);
+
+    apGroup.append("circle")
+        .attr("r", d => 8 + (d.load/100)*18)
+        .attr("fill", d =>
+            d.load > 80 ? "#ff4d4d" :
+            d.load > 50 ? "#ffb84d" : "#66ff66"
+        )
+        .attr("stroke", "#ffffff")
+        .attr("stroke-width", 1)
+        .on("mouseover", (event, d) => {
+            tooltip.style("opacity", 1)
+                .html(`<b>${d.id}</b><br>
+                       Floor: ${d.floor}<br>
+                       Room: ${d.room}<br>
+                       Load: ${d.load}%<br>
+                       Clients: ${d.client_count}`)
+                .style("left", event.pageX + "px")
+                .style("top", event.pageY - 20 + "px");
+        })
+        .on("mouseout", () => tooltip.style("opacity", 0));
+
+    apGroup.append("text")
+        .attr("class", "ap-label")
+        .attr("y", -25)
+        .text(d => d.id);
+
+
+    /* --- USERS --- */
+    const userGroup = svgGroup.selectAll(".user-node")
+        .data(users)
+        .enter()
+        .append("g")
+        .attr("class", "user-node")
+        .each(function(d) {
+            const floor = LAYOUT.floors.find(f => f.level === d.floor);
+            const room = floor.rooms.find(r => r.name.toLowerCase() === d.room.toLowerCase());
+            const pos = toGlobal(d.floor, room, d.x % room.width, d.y % room.height);
+            d._gx = pos.x;
+            d._gy = pos.y;
+        });
+
+    userGroup.append("circle")
+        .attr("class", "user")
+        .attr("r", 4)
+        .attr("cx", d => d._gx)
+        .attr("cy", d => d._gy)
+        .on("mouseover", (event, d) => {
+            tooltip.style("opacity", 1)
+                .html(`<b>${d.id}</b><br>
+                       Assigned AP: ${d.assigned_ap || "None"}<br>
+                       RSSI: ${d.RSSI}`)
+                .style("left", event.pageX + "px")
+                .style("top", event.pageY - 20 + "px");
+        })
+        .on("mouseout", () => tooltip.style("opacity", 0));
+
+    /* --- Lines user ↔ assigned AP ---- */
+    svgGroup.selectAll(".user-line")
+        .data(users.filter(u => u.assigned_ap))
+        .enter()
+        .append("line")
+        .attr("class", "user-line")
+        .attr("stroke", "#999")
+        .attr("stroke-width", 1)
+        .attr("opacity", 0.35)
+        .attr("x1", d => d._gx)
+        .attr("y1", d => d._gy)
+        .attr("x2", d => {
+            const ap = aps.find(a => a.id === d.assigned_ap);
+            return ap ? ap._gx : d._gx;
+        })
+        .attr("y2", d => {
+            const ap = aps.find(a => a.id === d.assigned_ap);
+            return ap ? ap._gy : d._gy;
+        });
+
+    /* --- Floor user counts --- */
+    const floors = LAYOUT.floors.slice().sort((a,b) => b.level - a.level);
+
+    floors.forEach((floor, idx) => {
+        const count = users.filter(u => u.floor === floor.level).length;
+
+        const margin = LAYOUT.canvas.margin;
+        const floorHeight = LAYOUT.canvas.floorHeight;
+        const canvasWidth = LAYOUT.canvas.width;
+        const top = margin + idx * (floorHeight + margin);
+
+        svgGroup.append("text")
+            .attr("class", "floor-count")
+            .attr("x", canvasWidth - 150)
+            .attr("y", top + 20)
+            .attr("fill", "#ccc")
+            .attr("font-size", 12)
+            .text(`Users: ${count}`);
+    });
+}
+
+/* -----------------------------------------------------------
+   5. WebSocket Connection
+------------------------------------------------------------*/
+function startWebSocket() {
+    const socket = new WebSocket("ws://127.0.0.1:8000/ws");
+
+    socket.onmessage = (event) => {
+        const state = JSON.parse(event.data);
+        redrawState(state);
+    };
+
+    socket.onclose = () => {
+        console.warn("WebSocket closed. Reconnecting...");
+        setTimeout(startWebSocket, 2000);
+    };
+}
+
+/* -----------------------------------------------------------
+   Start Program
+------------------------------------------------------------*/
+(async function main() {
+    await loadLayout();
+    initSVG();
+    drawStaticLayout();
+    startWebSocket();
+})();
+</script>
+
+</body>
+</html>
