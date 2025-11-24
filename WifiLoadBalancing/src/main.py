@@ -1,11 +1,9 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
 from simulation.simulator import WifiSimulator
 
 
