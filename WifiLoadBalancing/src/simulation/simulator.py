@@ -323,21 +323,23 @@ class WifiSimulator:
     def apply_mcmf(self):
         """
         Run MCMF with safe greedy fallback.
-
-        NOTE: This is *not* called in the live websocket simulation loop
-        unless USE_MCMF is set to True and user count is reasonable.
+        Includes REAL NETWORK LOAD BEHAVIOR:
+        - AP load accumulates over time
+        - AP load decays slowly instead of resetting
+        - MCMF uses this load to make smarter decisions
         """
-        # Update RSSI first
+        # 1. Update signal + user counts
         self.update_rssi()
         self.update_ap_load()
 
-        # HARD LIMIT: Users > max_clients → force-nearest assignment
+        # If any AP is already overloaded in raw count, fallback early
         for ap in self.aps:
             if ap["user_count"] > ap["max_users"]:
                 print(f"⚠️ AP {ap['id']} overloaded before MCMF, using greedy fallback")
                 GreedyRedistributor(self.aps, self.clients).redistribute()
                 return
 
+        # 2. Run MCMF
         try:
             assignments = MCMFEngine(self.clients, self.aps).run()
         except Exception as e:
@@ -347,12 +349,19 @@ class WifiSimulator:
 
         self.assignments = assignments
 
-        # Reset AP state
+        # -----------------------------
+        # 3. SMOOTH LOAD UPDATE LOGIC
+        # -----------------------------
+        LOAD_DECAY = 0.82      # load retains 82% of previous value each tick
+        LOAD_GAIN_WEIGHT = 0.40  # 40% from new user airtime
+
+        # Reset connected clients list (NOT load)
         for ap in self.aps:
             ap["connected_clients"] = []
-            ap["load"] = 0
 
-        # Apply assignments
+        # Compute new raw load
+        new_loads = {ap["id"]: 0 for ap in self.aps}
+
         for user in self.clients:
             uid = user["id"]
             aid = assignments.get(uid)
@@ -360,19 +369,77 @@ class WifiSimulator:
             user["assigned_ap"] = aid
             user["connected_ap"] = aid
 
-            if aid:
-                for ap in self.aps:
-                    if ap["id"] == aid:
-                        ap["connected_clients"].append(uid)
-                        ap["load"] += user.get("airtime_usage", 1)
-                        break
+            if not aid:
+                continue
+
+            new_loads[aid] += user.get("airtime_usage", 1)
+
+        # Apply load smoothing
+        for ap in self.aps:
+            ap_id = ap["id"]
+            prev_load = ap.get("load", 0)
+
+            # new instantaneous load
+            instant_load = new_loads.get(ap_id, 0)
+
+            # smoothed real load (enterprise WiFi-style)
+            smoothed = prev_load * LOAD_DECAY + instant_load * LOAD_GAIN_WEIGHT
+
+            # hard clamp to 0–100 range
+            ap["load"] = max(0, min(smoothed, 100))
+
+            # update connected clients list
+            for user in self.clients:
+                if user["assigned_ap"] == ap_id:
+                    ap["connected_clients"].append(user["id"])
+
 
     # ====================================================================
     # GREEDY REDISTRIBUTION
     # ====================================================================
     def apply_greedy(self):
-        """Run greedy load balancing."""
+        """
+        Greedy load balancing with REAL NETWORK LOAD BEHAVIOR.
+        - AP load does NOT reset to zero every tick
+        - Load accumulates with more users
+        - Load decays slowly (enterprise-style smoothing)
+        """
+
+        # 1. Run greedy redistribution
         GreedyRedistributor(self.aps, self.clients).redistribute()
+
+        # 2. Prepare smoother load logic
+        LOAD_DECAY = 0.82          # 82% of previous load kept each tick
+        LOAD_GAIN_WEIGHT = 0.40    # 40% from new instantaneous load
+
+        # Count new instantaneous load
+        new_loads = {ap["id"]: 0 for ap in self.aps}
+
+        for user in self.clients:
+            aid = user.get("assigned_ap") or user.get("nearest_ap")
+            if not aid:
+                continue
+            new_loads[aid] += user.get("airtime_usage", 1)
+
+        # Apply smoothing & update lists
+        for ap in self.aps:
+            ap_id = ap["id"]
+            prev_load = ap.get("load", 0)
+            instant_load = new_loads.get(ap_id, 0)
+
+            # enterprise-style smoothing
+            smoothed = prev_load * LOAD_DECAY + instant_load * LOAD_GAIN_WEIGHT
+
+            # clamp 0–100%
+            ap["load"] = max(0, min(smoothed, 100))
+
+            # update connected client list
+            ap["connected_clients"] = [
+                u["id"]
+                for u in self.clients
+                if (u.get("assigned_ap") or u.get("nearest_ap")) == ap_id
+            ]
+
 
     # ====================================================================
     # ADD/REMOVE USERS (FLOOR-SAFE, NO CORRIDOR/STAIRCASE SPAWN)
