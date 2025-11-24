@@ -3,22 +3,33 @@ import itertools
 
 class UserPriorityQueue:
     """
-    Min-heap based on priority.
-    Uses a tiebreaker counter so dicts are never compared.
+    Stable min-heap priority queue for users.
+    
+    - Supports multi-component priorities (tuple priority)
+    - Lower priority value gets popped first
+    - Counter ensures stability and no dict comparison
     """
 
     def __init__(self):
         self.heap = []
-        self.counter = itertools.count()   # unique increasing counter
+        self.counter = itertools.count()
 
     def push(self, priority, user):
-        # (priority, counter, user)
-        heapq.heappush(self.heap, (priority, next(self.counter), user))
+        """
+        Push a user with priority.
+
+        priority can be:
+            • int/float   (simple)
+            • tuple       (multi-factor priority)
+        """
+        entry = (priority, next(self.counter), user)
+        heapq.heappush(self.heap, entry)
 
     def pop(self):
-        if self.heap:
-            return heapq.heappop(self.heap)[2]  # return user
-        return None
+        """Return user with smallest priority score."""
+        if not self.heap:
+            return None
+        return heapq.heappop(self.heap)[2]
 
     def __len__(self):
         return len(self.heap)

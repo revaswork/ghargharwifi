@@ -1,370 +1,1289 @@
 <!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>WiFi Load Balancing — Live Multi-Floor Visualization</title>
+<html lang="en">
 
-    <!-- D3 -->
+<head>
+    <meta charset="UTF-8" />
+    <title>WiFi Load Balancing — Live Visualization</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- D3.js -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
 
     <style>
         body {
-            background: #111;
-            color: white;
-            font-family: Arial, sans-serif;
             margin: 0;
-        }
-        header {
-            text-align: center;
-            padding: 12px 0;
-            background: #0d0d0d;
-            border-bottom: 1px solid #222;
-            font-size: 20px;
-        }
-
-        #canvas {
-            width: 100%;
-            height: calc(100vh - 60px);
-            overflow: auto;
+            overflow: hidden;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+            background:
+                radial-gradient(circle at top, rgba(148, 163, 184, 0.35) 0%, rgba(15, 23, 42, 0.8) 40%, #020617 100%),
+                url("./assets/bg.png") center/cover fixed no-repeat;
+            background-blend-mode: soft-light;
+            color: white;
         }
 
         svg {
-            background: #141414;
+            background: rgba(3, 7, 18, 0.9);
             display: block;
         }
 
-        .floor-box {
-            fill: #0c0c0c;
-            stroke: #222;
-            stroke-width: 1;
+        @keyframes fadeSlide {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Heavy glass + inner glow */
+        .glass-panel {
+            backdrop-filter: blur(24px) saturate(200%);
+            -webkit-backdrop-filter: blur(24px) saturate(200%);
+            background: rgba(15, 23, 42, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.20);
+            box-shadow:
+                0 20px 40px rgba(0, 0, 0, 0.7),
+                inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+            border-radius: 18px;
+        }
+
+        .glass-soft {
+            backdrop-filter: blur(18px) saturate(180%);
+            -webkit-backdrop-filter: blur(18px) saturate(180%);
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            box-shadow: 0 18px 35px rgba(0, 0, 0, 0.6);
+            border-radius: 16px;
         }
 
         .room-rect {
-            fill: #111;
-            stroke: #2b2b2b;
-            stroke-width: 1;
-        }
-
-        .room-label {
-            fill: #ddd;
-            font-size: 12px;
+            stroke: rgba(148, 163, 184, 0.25);
+            fill: rgba(15, 23, 42, 0.85);
+            rx: 10;
+            ry: 10;
         }
 
         .user {
-            fill: cyan;
-            stroke: #094646;
-            stroke-width: 0.5;
+            fill: #22d3ee;
+            transition: 0.25s;
         }
 
-        .ap-label {
-            fill: white;
-            font-size: 12px;
-            text-anchor: middle;
-            pointer-events: none;
+        .user:hover {
+            r: 7 !important;
+            filter: drop-shadow(0 0 6px #22d3ee);
+        }
+
+        .ap-glow {
+            filter: drop-shadow(0 0 10px #fb7185);
         }
 
         .tooltip {
             position: absolute;
-            background: #222;
-            color: white;
-            padding: 8px;
-            border-radius: 5px;
+            background: rgba(15, 23, 42, 0.94);
+            padding: 8px 10px;
+            border: 1px solid rgba(148, 163, 184, 0.5);
+            border-radius: 8px;
             pointer-events: none;
             opacity: 0;
-            border: 1px solid #444;
-        }
-
-        .legend {
-            position: fixed;
-            right: 15px;
-            top: 80px;
-            background: rgba(0,0,0,0.45);
-            padding: 10px;
-            color: white;
-            border-radius: 6px;
-            border: 1px solid #222;
+            transition: opacity 0.15s;
             font-size: 12px;
         }
+
+        .user-line {
+            pointer-events: none;
+        }
+
+        @keyframes apPulse {
+            0% {
+                opacity: 0.18;
+            }
+
+            50% {
+                opacity: 0.35;
+            }
+
+            100% {
+                opacity: 0.18;
+            }
+        }
+
+        .ap-range {
+            animation: apPulse 4s ease-in-out infinite;
+        }
+
+        /* Neon animated floor border */
+        @keyframes neonBorder {
+            0% {
+                stroke-dashoffset: 0;
+                opacity: 0.35;
+            }
+
+            50% {
+                stroke-dashoffset: -40;
+                opacity: 0.9;
+            }
+
+            100% {
+                stroke-dashoffset: -80;
+                opacity: 0.35;
+            }
+        }
+
+        .floor-neon {
+            fill: none;
+            stroke: #8db5e9;
+            stroke-width: 2;
+            stroke-linejoin: round;
+            stroke-dasharray: 10 8;
+            filter: drop-shadow(0 0 12px #a855f7);
+            animation: neonBorder 3.2s linear infinite;
+        }
+
+        .user-trail {
+            pointer-events: none;
+        }
+
+        .floor-card {
+            transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+        }
+
+        .floor-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 16px 30px rgba(0, 0, 0, 0.65);
+            border-color: rgba(248, 250, 252, 0.5);
+            background: radial-gradient(circle at top left, rgba(148, 163, 184, 0.20), rgba(15, 23, 42, 0.8));
+        }
+
+        /* Heatmap overlay rects */
+        .room-heat {
+            pointer-events: none;
+        }
+
+        /* --- New Debug & Control Styles --- */
+        .debug-panel {
+            font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.4;
+            max-height: 200px;
+            overflow-y: auto;
+            color: #a5b4fc;
+        }
+
+        .debug-entry {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 2px 0;
+        }
+
+        .debug-error {
+            color: #f87171;
+        }
+
+        .debug-warn {
+            color: #fbbf24;
+        }
+
+        .debug-success {
+            color: #34d399;
+        }
+
+        .debug-info {
+            color: #60a5fa;
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .status-online {
+            background-color: #34d399;
+            color: #34d399;
+        }
+
+        .status-offline {
+            background-color: #f87171;
+            color: #f87171;
+        }
+
+        .status-connecting {
+            background-color: #fbbf24;
+            color: #fbbf24;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .btn-glass {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #e2e8f0;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-glass:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+        .update-card {
+            padding: 8px 10px;
+            background: rgba(148, 163, 184, 0.12);
+            border-left: 3px solid #38bdf8;
+            border-radius: 6px;
+            animation: fadeSlide 0.4s ease-out;
+        }
+        .update-card.new {
+            border-left-color: #22c55e;
+        }
+        .update-card.warn {
+            border-left-color: #eab308;
+        }
+        .update-card.error {
+            border-left-color: #ef4444;
+        }
+
     </style>
 </head>
 
-<body>
+<body class="select-none">
 
-<header>WiFi Load Balancing — Live Multi-Floor Visualization</header>
+    <!-- Alarm toasts -->
+    <div id="alarm-container" style="position: fixed; top: 20px; right: 20px; width: 280px; z-index: 99999;">
+    </div>
 
-<div id="canvas"></div>
-<div id="tooltip" class="tooltip"></div>
+    <!-- Header -->
+    <header class="glass-panel w-full text-center py-4 text-xl font-semibold tracking-wide relative">
+        Campus WiFi Load Balancing — Live Multi-Floor Visualization
+        <div class="absolute right-6 top-1/2 -translate-y-1/2 text-xs font-normal flex items-center gap-3">
+            <span id="ws-status" class="flex items-center">
+                <span class="status-dot status-offline"></span>
+                <span class="text-slate-300">Disconnected</span>
+            </span>
+        </div>
+    </header>
 
-<div class="legend">
-    <b>Legend</b><br><br>
-    ● <span style="color:#66ff66;">AP (low load)</span><br>
-    ● <span style="color:#ffb84d;">AP (medium load)</span><br>
-    ● <span style="color:#ff4d4d;">AP (high load)</span><br>
-    ● <span style="color:cyan;">Users</span><br><br>
-    Hover for details<br>
-</div>
+    <!-- Canvas scroll area -->
+    <div id="canvas" class="w-full h-[calc(100vh-64px)] overflow-auto">
+        <!-- svg injected by D3 -->
+    </div>
 
-<script>
-/* -----------------------------------------------------------
-   1. Load Static Layout Only
-------------------------------------------------------------*/
-let LAYOUT = null;
+    <div id="tooltip" class="tooltip"></div>
 
-async function loadLayout() {
-    LAYOUT = await fetch('./data/campus_layout.json').then(r => r.json());
-}
+    <!-- Left Floor Dashboard (with mini-map-style cards) -->
+    <div id="sidebar" class="glass-panel fixed left-4 top-24 p-4 w-72 text-sm hidden z-20">
+    </div>
 
-/* -----------------------------------------------------------
-   2. Create SVG + Zoom
-------------------------------------------------------------*/
-let svg, svgGroup, tooltip;
+    <!-- Bottom-Left Stats Panel -->
+    <div id="stats-panel" class="glass-panel fixed left-4 bottom-6 p-4 w-80 text-xs hidden z-20">
+        <!-- filled from JS -->
+    </div>
 
-function initSVG() {
-    const canvasWidth = LAYOUT.canvas.width;
-    const floorHeight = LAYOUT.canvas.floorHeight;
-    const margin = LAYOUT.canvas.margin;
-    const totalHeight = LAYOUT.floors.length * (floorHeight + margin) + margin;
+    <!-- Legend + Heatmap toggle -->
+    <div class="glass-panel fixed right-4 top-24 text-sm p-4 z-20 w-72">
+        <b class="text-lg">Legend</b><br><br>
+        <div class="space-y-1">
+            <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full bg-green-400"></span>
+                <span>AP: Low load (0–40%)</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full bg-yellow-400"></span>
+                <span>AP: Medium load (40–70%)</span>
+            </div>
+            <div class="flex items-center gap-2 mb-2">
+                <span class="w-3 h-3 rounded-full bg-red-500"></span>
+                <span>AP: High load (70–100%)</span>
+            </div>
+            <div class="flex items-center gap-2 mt-1">
+                <span class="w-3 h-3 rounded-full bg-cyan-300"></span>
+                <span>Users</span>
+            </div>
+        </div>
 
-    svg = d3.select("#canvas")
-        .append("svg")
-        .attr("width", canvasWidth + 40)
-        .attr("height", totalHeight);
+        <hr class="border-slate-600/50 my-3">
 
-    svgGroup = svg.append("g");
-    tooltip = d3.select("#tooltip");
+        <div class="text-xs mb-2 font-semibold">User Density Heatmap</div>
+        <div class="flex items-center gap-2 mb-2">
+            <div class="flex-1 h-2 rounded-full bg-gradient-to-r from-emerald-400 via-amber-300 to-red-500"></div>
+            <span class="text-[10px] text-slate-300">low → high</span>
+        </div>
+        <p class="text-[11px] text-slate-300 mb-3">
+            Rooms with more users glow from green to red when heatmap is enabled.
+        </p>
 
-    const zoom = d3.zoom()
-        .scaleExtent([0.4, 3])
-        .on("zoom", (event) => svgGroup.attr("transform", event.transform));
+        <button id="heatmap-btn" onclick="toggleHeatmap()"
+            class="glass-soft w-full py-2 text-xs flex items-center justify-between px-3 hover:bg-white/5">
+            <span>Heatmap</span>
+            <span id="heatmap-state" class="text-emerald-400 font-semibold">OFF</span>
+        </button>
 
-    svg.call(zoom);
-}
+        <hr class="border-slate-600/50 my-3">
 
-/* -----------------------------------------------------------
-   3. Draw Floors / Rooms (Static Layout)
-------------------------------------------------------------*/
-function drawStaticLayout() {
-    const floors = LAYOUT.floors.slice().sort((a,b) => b.level - a.level);
+        <div class="text-xs mb-2 font-semibold">Debug Controls</div>
+        <div class="grid grid-cols-2 gap-2 mb-2">
+            <button onclick="reconnectWebSocket()" class="btn-glass">🔄 Reconnect</button>
+            <button onclick="testBackend()" class="btn-glass">🔍 Test API</button>
+        </div>
 
-    const margin = LAYOUT.canvas.margin;
-    const floorHeight = LAYOUT.canvas.floorHeight;
-    const canvasWidth = LAYOUT.canvas.width;
+        <div class="text-xs mb-1 font-semibold">Console Log</div>
+        <div id="debug-console" class="glass-soft p-2 debug-panel rounded">
+            <!-- logs go here -->
+        </div>
+    </div>
 
-    floors.forEach((floor, idx) => {
-        const floorTop = margin + idx * (floorHeight + margin);
+    <!-- Zoom Controls -->
+    <div class="fixed bottom-6 right-6 flex gap-3 z-20">
+        <button onclick="zoomIn()" class="glass-panel px-4 py-2 rounded-lg text-lg hover:bg-white/10">+</button>
+        <button onclick="zoomOut()" class="glass-panel px-4 py-2 rounded-lg text-lg hover:bg-white/10">−</button>
+    </div>
 
-        svgGroup.append("rect")
-            .attr("class", "floor-box")
-            .attr("x", margin)
-            .attr("y", floorTop)
-            .attr("width", canvasWidth - margin*2)
-            .attr("height", floorHeight);
+    <!-- System Updates / Changelog -->
+    <div id="updates-panel"
+        class="glass-panel fixed bottom-25 right-[10px] p-4 w-80 text-xs z-20 hidden transition-all duration-300">
+        <div class="text-sm font-semibold mb-2">System Updates</div>
+        <div id="updates-content" class="space-y-2 max-h-48 overflow-y-auto pr-1"></div>
+    </div>
 
-        svgGroup.append("text")
-            .attr("x", margin + 12)
-            .attr("y", floorTop + 20)
-            .attr("fill", "white")
-            .attr("font-size", 14)
-            .text(`Level ${floor.level} — ${floor.name}`);
+    <script>
+        let LAYOUT = null;
+        let svg, svgGroup, tooltip;
+        let zoom;
+        let userTrails = {}; // id -> [{x,y}, ...]
+        let lastState = null;
+        let heatmapEnabled = false;
 
-        (floor.rooms || []).forEach(room => {
-            const x = room.x + margin;
-            const y = floorTop + room.y;
+        // 🔥 NEW: client-side throttling state
+        let latestSimState = null;
+        let redrawInProgress = false;
+        let lastRedrawTime = 0;
+        const MIN_REDRAW_INTERVAL = 150; // ms between redraws (≈6–7 FPS max)
 
-            svgGroup.append("rect")
-                .attr("class", "room-rect")
-                .attr("x", x)
-                .attr("y", y)
-                .attr("width", room.width)
-                .attr("height", room.height)
-                .attr("opacity", 0.6);
+        // ============================================================
+        // DEBUG LOGGER
+        // ============================================================
+        const debugLog = {
+            container: null,
+            logs: [],
+            maxLogs: 50,
 
-            svgGroup.append("text")
-                .attr("x", x + 8)
-                .attr("y", y + 16)
-                .attr("class", "room-label")
-                .text(room.name);
-        });
-    });
-}
+            init() {
+                this.container = document.getElementById('debug-console');
+                this.info('Debug console initialized');
+            },
 
-/* -----------------------------------------------------------
-   Convert local coords to global coords
-------------------------------------------------------------*/
-function toGlobal(floorLevel, room, lx, ly) {
-    const floors = LAYOUT.floors.slice().sort((a,b) => b.level - a.level);
-    const index = floors.findIndex(f => f.level === floorLevel);
+            log(message, type = 'debug-info') {
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = { message: `[${timestamp}] ${message}`, type };
 
-    const margin = LAYOUT.canvas.margin;
-    const floorHeight = LAYOUT.canvas.floorHeight;
+                this.logs.push(logEntry);
+                if (this.logs.length > this.maxLogs) {
+                    this.logs.shift();
+                }
 
-    const top = margin + index * (floorHeight + margin);
+                this.render();
+                console.log(message); // Also log to browser console
+            },
 
-    return {
-        x: room.x + margin + lx,
-        y: top + room.y + ly
-    };
-}
+            error(message) { this.log(`❌ ${message}`, 'debug-error'); },
+            warn(message) { this.log(`⚠️ ${message}`, 'debug-warn'); },
+            success(message) { this.log(`✅ ${message}`, 'debug-success'); },
+            info(message) { this.log(`ℹ️ ${message}`, 'debug-info'); },
 
-/* -----------------------------------------------------------
-   4. Dynamic Redraw Based on Backend State
-------------------------------------------------------------*/
-function redrawState(state) {
-    const aps = state.aps;
-    const users = state.clients;
+            render() {
+                if (!this.container) return;
+                this.container.innerHTML = this.logs
+                    .map(log => `<div class="debug-entry ${log.type}">${log.message}</div>`)
+                    .join('');
+                this.container.scrollTop = this.container.scrollHeight;
+            }
+        };
 
-    svgGroup.selectAll(".ap-node").remove();
-    svgGroup.selectAll(".user-node").remove();
-    svgGroup.selectAll(".user-line").remove();
-    svgGroup.selectAll(".floor-count").remove();
+        const updatesPanel = {
+            panel: null,
+            content: null,
 
-    /* --- Compute client counts based on assigned_ap --- */
-    aps.forEach(ap => ap.client_count = 0);
-    users.forEach(u => {
-        if (u.assigned_ap) {
-            const ap = aps.find(a => a.id === u.assigned_ap);
-            if (ap) ap.client_count++;
+            init() {
+                this.panel = document.getElementById("updates-panel");
+                this.content = document.getElementById("updates-content");
+            },
+
+            add(message, type = "new") {
+                if (!this.panel) return;
+
+                this.panel.classList.remove("hidden");
+
+                const div = document.createElement("div");
+                div.className = `update-card ${type}`;
+                div.innerHTML = message;
+
+                this.content.prepend(div);
+
+                // limit to last 12 updates
+                while (this.content.children.length > 12) {
+                    this.content.lastChild.remove();
+                }
+            }
+        };
+
+
+        // ============================================================
+        // CONFIGURATION
+        // ============================================================
+        const CONFIG = {
+            WS_URL: 'ws://127.0.0.1:8000/ws',
+            API_URL: 'http://127.0.0.1:8000',
+            RECONNECT_DELAY: 3000,
+            HEARTBEAT_INTERVAL: 30000,
+        };
+
+        let ws = null;
+        let reconnectTimer = null;
+        let heartbeatTimer = null;
+        let lastDataReceived = 0;
+
+        const MAX_TRAIL_POINTS = 5;
+        const AP_RANGE_DEFAULT = 100;
+
+        // floor level -> yTop in SVG coords
+        const floorYByLevel = {};
+
+        // -------------------- Backend Calls --------------------
+        async function loadLayout() {
+            try {
+                const resp = await fetch("./data/campus_layout.json");
+
+                if (!resp.ok) {
+                    console.error("❌ Failed to load campus_layout.json. HTTP status =", resp.status);
+                    throw new Error("Failed to load campus_layout.json");
+                }
+
+                LAYOUT = await resp.json();
+                console.log("✅ Layout loaded:", LAYOUT);
+            } catch (err) {
+                console.error("🔥 Error in loadLayout():", err);
+                throw err;
+            }
         }
-    });
 
-    /* --- APs --- */
-    const apGroup = svgGroup.selectAll(".ap-node")
-        .data(aps)
-        .enter()
-        .append("g")
-        .attr("class", "ap-node")
-        .each(function(d) {
-            const floor = LAYOUT.floors.find(f => f.level === d.floor);
-            const room = floor.rooms.find(r => r.name.toLowerCase() === d.room.toLowerCase());
-            const pos = toGlobal(d.floor, room, room.width/2, room.height/2);
-            d._gx = pos.x;
-            d._gy = pos.y;
-        })
-        .attr("transform", d => `translate(${d._gx},${d._gy})`);
+        // IMPORTANT: backend is on :8000, frontend likely on :5500 (Live Server)
+        function addUser(level) {
+            fetch(`http://127.0.0.1:8000/floor/${level}/add_user`, { method: "POST" });
+        }
 
-    apGroup.append("circle")
-        .attr("r", d => 8 + (d.load/100)*18)
-        .attr("fill", d =>
-            d.load > 80 ? "#ff4d4d" :
-            d.load > 50 ? "#ffb84d" : "#66ff66"
-        )
-        .attr("stroke", "#ffffff")
-        .attr("stroke-width", 1)
-        .on("mouseover", (event, d) => {
-            tooltip.style("opacity", 1)
-                .html(`<b>${d.id}</b><br>
-                       Floor: ${d.floor}<br>
-                       Room: ${d.room}<br>
-                       Load: ${d.load}%<br>
-                       Clients: ${d.client_count}`)
-                .style("left", event.pageX + "px")
-                .style("top", event.pageY - 20 + "px");
-        })
-        .on("mouseout", () => tooltip.style("opacity", 0));
+        function removeUser(level) {
+            fetch(`http://127.0.0.1:8000/floor/${level}/remove_user`, { method: "POST" });
+        }
 
-    apGroup.append("text")
-        .attr("class", "ap-label")
-        .attr("y", -25)
-        .text(d => d.id);
+        function showAlarm(message) {
+            const box = document.createElement("div");
+            box.style.cssText = `
+            background: rgba(248, 113, 113, 0.95);
+            color: white;
+            font-size: 13px;
+            padding: 12px 15px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            animation: fadeSlide 0.4s ease-out;
+        `;
+            box.textContent = "🚨 " + message;
+
+            document.getElementById("alarm-container").appendChild(box);
+
+            setTimeout(() => box.remove(), 4000);
+        }
+
+        // -------------------- SVG Init --------------------
+        function initSVG() {
+            const { width, floorHeight, margin } = LAYOUT.canvas;
+            const totalHeight = LAYOUT.floors.length * (floorHeight + margin) + margin;
+
+            svg = d3.select("#canvas")
+                .append("svg")
+                .attr("viewBox", `0 0 ${width + 40} ${totalHeight}`)
+                .attr("preserveAspectRatio", "xMidYMin meet")
+                .classed("w-full", true);
+
+            svgGroup = svg.append("g");
+            tooltip = d3.select("#tooltip");
+
+            const defs = svg.append("defs");
+            const radial = defs.append("radialGradient")
+                .attr("id", "apRangeGradient")
+                .attr("cx", "50%")
+                .attr("cy", "50%")
+                .attr("r", "50%");
+            radial.append("stop")
+                .attr("offset", "0%")
+                .attr("stop-color", "#22c55e")
+                .attr("stop-opacity", 0.45);
+            radial.append("stop")
+                .attr("offset", "100%")
+                .attr("stop-color", "#22c55e")
+                .attr("stop-opacity", 0);
+
+            zoom = d3.zoom()
+                .scaleExtent([0.4, 3])
+                .on("zoom", (event) => svgGroup.attr("transform", event.transform));
+
+            svg.call(zoom);
+        }
+
+        function getRoomAccentColor(name) {
+            const n = name.toLowerCase();
+            if (n.includes("library")) return "#38bdf8";
+            if (n.includes("lab")) return "#a855f7";
+            if (n.includes("canteen")) return "#fb923c";
+            if (n.includes("class")) return "#e5e7eb";
+            if (n.includes("success")) return "#22c55e";
+            return "#9ca3af";
+        }
+
+        function drawStaticLayout() {
+            const floorsSorted = [...LAYOUT.floors].sort((a, b) => b.level - a.level);
+            const { margin, floorHeight, width } = LAYOUT.canvas;
+
+            floorsSorted.forEach((floor, idx) => {
+                const top = margin + idx * (floorHeight + margin);
+                floorYByLevel[floor.level] = top;
+
+                svgGroup.append("rect")
+                    .attr("class", "floor-box")
+                    .attr("x", margin)
+                    .attr("y", top)
+                    .attr("width", width - margin * 2)
+                    .attr("height", floorHeight)
+                    .attr("fill", "rgba(15,23,42,0.96)")
+                    .attr("stroke", "rgba(148,163,184,0.35)")
+                    .attr("rx", 18);
+
+                svgGroup.append("rect")
+                    .attr("class", "floor-neon")
+                    .attr("x", margin + 4)
+                    .attr("y", top + 4)
+                    .attr("width", width - margin * 2 - 8)
+                    .attr("height", floorHeight - 8)
+                    .attr("rx", 20);
+
+                svgGroup.append("text")
+                    .attr("x", margin + 16)
+                    .attr("y", top + 26)
+                    .attr("fill", "#e5e7eb")
+                    .attr("font-size", 14)
+                    .attr("font-weight", "600")
+                    .text(`Level ${floor.level} — ${floor.name}`);
+
+                floor.rooms?.forEach(room => {
+                    const x = room.x + margin;
+                    const y = top + room.y;
+
+                    svgGroup.append("rect")
+                        .attr("class", "room-rect")
+                        .attr("x", x)
+                        .attr("y", y)
+                        .attr("width", room.width)
+                        .attr("height", room.height)
+                        .attr("opacity", 0.9);
+
+                    const accentColor = getRoomAccentColor(room.name);
+                    svgGroup.append("rect")
+                        .attr("x", x + 6)
+                        .attr("y", y + 6)
+                        .attr("width", 6)
+                        .attr("height", 22)
+                        .attr("fill", accentColor)
+                        .attr("opacity", 0.95);
+
+                    svgGroup.append("text")
+                        .attr("x", x + 18)
+                        .attr("y", y + 22)
+                        .attr("fill", "#e5e7eb")
+                        .attr("font-size", 12)
+                        .text(room.name);
+
+                    svgGroup.append("rect")
+                        .attr("class", "room-heat")
+                        .attr("data-floor", floor.level)
+                        .attr("data-room", room.name)
+                        .attr("x", x)
+                        .attr("y", y)
+                        .attr("width", room.width)
+                        .attr("height", room.height)
+                        .attr("fill", "#22c55e")
+                        .attr("opacity", 0);
+                });
+            });
+        }
 
 
-    /* --- USERS --- */
-    const userGroup = svgGroup.selectAll(".user-node")
-        .data(users)
-        .enter()
-        .append("g")
-        .attr("class", "user-node")
-        .each(function(d) {
-            const floor = LAYOUT.floors.find(f => f.level === d.floor);
-            const room = floor.rooms.find(r => r.name.toLowerCase() === d.room.toLowerCase());
-            const pos = toGlobal(d.floor, room, d.x % room.width, d.y % room.height);
-            d._gx = pos.x;
-            d._gy = pos.y;
-        });
+        function apColor(load) {
+            const t = (load || 0) / 100;
+            if (t < 0.4) return "#22c55e";
+            if (t < 0.7) return "#eab308";
+            return "#ef4444";
+        }
 
-    userGroup.append("circle")
-        .attr("class", "user")
-        .attr("r", 4)
-        .attr("cx", d => d._gx)
-        .attr("cy", d => d._gy)
-        .on("mouseover", (event, d) => {
-            tooltip.style("opacity", 1)
-                .html(`<b>${d.id}</b><br>
-                       Assigned AP: ${d.assigned_ap || "None"}<br>
-                       RSSI: ${d.RSSI}`)
-                .style("left", event.pageX + "px")
-                .style("top", event.pageY - 20 + "px");
-        })
-        .on("mouseout", () => tooltip.style("opacity", 0));
+        function densityColor(t) {
+            if (t <= 0.0) return "#22c55e";
+            if (t < 0.5) return "#4ade80";
+            if (t < 0.8) return "#eab308";
+            return "#ef4444";
+        }
 
-    /* --- Lines user ↔ assigned AP ---- */
-    svgGroup.selectAll(".user-line")
-        .data(users.filter(u => u.assigned_ap))
-        .enter()
-        .append("line")
-        .attr("class", "user-line")
-        .attr("stroke", "#999")
-        .attr("stroke-width", 1)
-        .attr("opacity", 0.35)
-        .attr("x1", d => d._gx)
-        .attr("y1", d => d._gy)
-        .attr("x2", d => {
-            const ap = aps.find(a => a.id === d.assigned_ap);
-            return ap ? ap._gx : d._gx;
-        })
-        .attr("y2", d => {
-            const ap = aps.find(a => a.id === d.assigned_ap);
-            return ap ? ap._gy : d._gy;
-        });
+        function updateStatsPanel(aps, users) {
+            const stats = document.getElementById("stats-panel");
+            stats.classList.remove("hidden");
 
-    /* --- Floor user counts --- */
-    const floors = LAYOUT.floors.slice().sort((a,b) => b.level - a.level);
+            const totalUsers = users.length;
+            const totalAps = aps.length;
+            const overloaded = aps.filter(ap => (ap.user_count || 0) >= (ap.max_users || ap.max_clients || 30)).length;
+            const avgLoad = aps.length
+                ? (aps.reduce((sum, ap) => sum + (ap.load || 0), 0) / aps.length).toFixed(1)
+                : 0;
 
-    floors.forEach((floor, idx) => {
-        const count = users.filter(u => u.floor === floor.level).length;
+            stats.innerHTML = `
+            <div class="text-[0.8rem] space-y-2">
+                <div class="flex items-center justify-between">
+                    <div class="font-semibold text-sm">Live Network Snapshot</div>
+                    <span class="text-[10px] text-slate-300">~0.2s refresh</span>
+                </div>
 
-        const margin = LAYOUT.canvas.margin;
-        const floorHeight = LAYOUT.canvas.floorHeight;
-        const canvasWidth = LAYOUT.canvas.width;
-        const top = margin + idx * (floorHeight + margin);
+                <div class="flex justify-between">
+                    <span>Total Users</span>
+                    <span class="text-cyan-300 font-semibold">${totalUsers}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Total APs</span>
+                    <span class="text-emerald-300 font-semibold">${totalAps}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>APs at / over threshold</span>
+                    <span class="text-red-400 font-semibold">${overloaded}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Average AP Load</span>
+                    <span class="text-yellow-300 font-semibold">${avgLoad}%</span>
+                </div>
+            </div>
+        `;
+        }
 
-        svgGroup.append("text")
-            .attr("class", "floor-count")
-            .attr("x", canvasWidth - 150)
-            .attr("y", top + 20)
-            .attr("fill", "#ccc")
-            .attr("font-size", 12)
-            .text(`Users: ${count}`);
-    });
-}
+        function scrollToFloor(level) {
+            const container = document.getElementById("canvas");
+            const y = floorYByLevel[level];
+            if (y === undefined) return;
 
-/* -----------------------------------------------------------
-   5. WebSocket Connection
-------------------------------------------------------------*/
-function startWebSocket() {
-    const socket = new WebSocket("ws://127.0.0.1:8000/ws");
+            const offset = Math.max(0, y - 40);
+            container.scrollTo({
+                top: offset,
+                behavior: "smooth"
+            });
+        }
 
-    socket.onmessage = (event) => {
-        const state = JSON.parse(event.data);
-        redrawState(state);
-    };
+        function buildSidebar(aps, users) {
+            const sidebar = document.getElementById("sidebar");
+            sidebar.classList.remove("hidden");
 
-    socket.onclose = () => {
-        console.warn("WebSocket closed. Reconnecting...");
-        setTimeout(startWebSocket, 2000);
-    };
-}
+            const floorsSorted = [...LAYOUT.floors].sort((a, b) => b.level - a.level);
 
-/* -----------------------------------------------------------
-   Start Program
-------------------------------------------------------------*/
-(async function main() {
-    await loadLayout();
-    initSVG();
-    drawStaticLayout();
-    startWebSocket();
-})();
-</script>
+            sidebar.innerHTML = `
+            <div class="mb-3 flex items-center justify-between">
+                <div class="text-sm font-semibold">Floors Overview</div>
+                <div class="text-[10px] text-slate-300">tap to jump / adjust users</div>
+            </div>
+        `;
+
+            floorsSorted.forEach(floor => {
+                const count = users.filter(u => u.floor === floor.level).length;
+                const floorAps = aps.filter(ap => ap.floor === floor.level);
+                const avgFloorLoad = floorAps.length
+                    ? (floorAps.reduce((s, a) => s + (a.load || 0), 0) / floorAps.length).toFixed(0)
+                    : 0;
+
+                let barColor = "#22c55e";
+                const t = avgFloorLoad / 100;
+                if (t >= 0.7) barColor = "#ef4444";
+                else if (t >= 0.4) barColor = "#eab308";
+
+                sidebar.innerHTML += `
+                <div
+                    class="floor-card w-full mb-2 text-left px-3 py-2 glass-soft border border-slate-500/60 cursor-pointer"
+                    data-floor="${floor.level}"
+                >
+                    <div class="flex justify-between items-center">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-slate-300">Level ${floor.level}</span>
+                                <span class="w-1 h-1 rounded-full bg-slate-400"></span>
+                                <span class="text-[11px] text-slate-200">${floor.name.substring(0, 18)}</span>
+                            </div>
+                            <div class="mt-1 text-[11px] text-slate-300">
+                                Users:
+                                <span class="text-cyan-300 font-semibold" id="count-${floor.level}">
+                                    ${count}
+                                </span>
+                            </div>
+                            <div class="mt-1 w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                                <div style="width: ${avgFloorLoad}%; background: ${barColor};"
+                                    class="h-full rounded-full"></div>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col items-center gap-1 ml-2">
+                            <button onclick="addUser(${floor.level}); event.stopPropagation();"
+                                class="w-6 h-6 rounded-full bg-emerald-600 hover:bg-emerald-400 text-xs font-semibold flex items-center justify-center">
+                                +
+                            </button>
+
+                            <button onclick="removeUser(${floor.level}); event.stopPropagation();"
+                                class="w-6 h-6 rounded-full bg-rose-600 hover:bg-rose-400 text-xs font-semibold flex items-center justify-center">
+                                −
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            });
+
+            sidebar.querySelectorAll("[data-floor]").forEach(card => {
+                card.addEventListener("click", () => {
+                    const level = parseInt(card.getAttribute("data-floor"), 10);
+                    scrollToFloor(level);
+                });
+            });
+        }
+
+        function applyHeatmap(users) {
+            const heatRects = d3.selectAll(".room-heat");
+            if (!heatmapEnabled) {
+                heatRects.attr("opacity", 0);
+                return;
+            }
+
+            const counts = {};
+            users.forEach(u => {
+                if (!u.floor || !u.room) return;
+                const key = `${u.floor}||${u.room}`;
+                counts[key] = (counts[key] || 0) + 1;
+            });
+
+            const values = Object.values(counts);
+            const maxCount = values.length ? Math.max(...values) : 1;
+
+            heatRects.each(function () {
+                const rect = d3.select(this);
+                const floor = rect.attr("data-floor");
+                const room = rect.attr("data-room");
+                const key = `${floor}||${room}`;
+                const c = counts[key] || 0;
+                const t = maxCount ? c / maxCount : 0;
+
+                if (c === 0) {
+                    rect.attr("opacity", 0);
+                } else {
+                    rect
+                        .attr("fill", densityColor(t))
+                        .attr("opacity", 0.18 + t * 0.35);
+                }
+            });
+        }
+
+        // -------------------- REDRAW (main visualization) --------------------
+        function redrawState(state) {
+            lastState = state;
+
+            const aps = state.aps;
+            const users = state.clients || [];
+
+            // Compute global AP coordinates
+            aps.forEach(ap => {
+                const floorTop = floorYByLevel[ap.floor];
+                const margin = LAYOUT.canvas.margin;
+
+                ap._gx = ap.x + margin;
+                ap._gy = floorTop + ap.y;
+            });
+
+            // Compute global USER coordinates
+            users.forEach(u => {
+                const floorTop = floorYByLevel[u.floor];
+                const margin = LAYOUT.canvas.margin;
+
+                u._gx = u.x + margin;
+                u._gy = floorTop + u.y;
+            });
+
+            aps.forEach(ap => ap.client_count = 0);
+            users.forEach(u => {
+                if (u.assigned_ap) {
+                    const ap = aps.find(a => a.id === u.assigned_ap);
+                    if (ap) ap.client_count++;
+                }
+            });
+
+            updateStatsPanel(aps, users);
+            buildSidebar(aps, users);
+
+            svgGroup.selectAll(".ap-node").remove();
+            svgGroup.selectAll(".user-line-nearest").remove();
+            svgGroup.selectAll(".user-line-assigned").remove();
+            svgGroup.selectAll(".user-trail").remove();
+
+            // ---- APs ----
+            const apGroup = svgGroup.selectAll(".ap-node")
+                .data(aps)
+                .enter()
+                .append("g")
+                .attr("class", "ap-node")
+                .each(function (d) {
+                    const global = { x: d._gx, y: d._gy };
+                    d._gx = global.x;
+                    d._gy = global.y;
+                })
+                .attr("transform", d => `translate(${d._gx},${d._gy})`);
+
+            apGroup.append("circle")
+                .attr("class", "ap-range")
+                .attr("r", d => d.coverage_radius || AP_RANGE_DEFAULT)
+                .attr("fill", "url(#apRangeGradient)")
+                .attr("opacity", 0.22);
+
+            const arcGenerator = d3.arc()
+                .innerRadius(22)
+                .outerRadius(26)
+                .startAngle(0);
+
+            apGroup.append("path")
+                .attr("d", d =>
+                    arcGenerator.endAngle(
+                        (Math.max(0, Math.min(d.load || 0, 100)) / 100) * 2 * Math.PI
+                    )()
+                )
+                .attr("fill", d => apColor(d.load))
+                .attr("opacity", 0.9);
+
+            apGroup.append("circle")
+                .attr("r", d => 10 + (d.load / 100) * 14)
+                .attr("fill", d => apColor(d.load))
+                .attr("class", d => d.load > 80 ? "ap-glow" : "")
+                .on("mouseover", (event, d) => {
+                    const maxUsers = d.max_users || d.max_clients || 30;
+                    tooltip
+                        .style("opacity", 1)
+                        .html(
+                            `<b>${d.id}</b><br>
+                        Floor: ${d.floor}<br>
+                        Room: ${d.room}<br>
+                        Load: ${d.load || 0}%<br>
+                        Clients (MCMF): ${d.client_count || 0}<br>
+                        Users via RSSI: ${d.user_count || 0}/${maxUsers}`
+                        )
+                        .style("left", event.pageX + 10 + "px")
+                        .style("top", event.pageY - 20 + "px");
+                })
+                .on("mouseout", () => tooltip.style("opacity", 0));
+
+            apGroup.append("text")
+                .attr("y", -25)
+                .attr("text-anchor", "middle")
+                .attr("fill", "#e5e7eb")
+                .attr("font-size", 11)
+                .text(d => d.id);
+
+            // ---- Users & trails ----
+            users.forEach(u => {
+                if (!userTrails[u.id]) userTrails[u.id] = [];
+            });
+
+            const positionedUsers = users.map(d => {
+                const global = { x: d._gx, y: d._gy };
+                d._gx = global.x;
+                d._gy = global.y;
+
+                const trail = userTrails[d.id] || [];
+                trail.push({ x: d._gx, y: d._gy });
+                if (trail.length > MAX_TRAIL_POINTS) trail.shift();
+                userTrails[d.id] = trail;
+
+                return d;
+            });
+
+            const trailData = [];
+            Object.entries(userTrails).forEach(([id, points]) => {
+                points.forEach((p, idx) => {
+                    trailData.push({
+                        id,
+                        x: p.x,
+                        y: p.y,
+                        age: idx,
+                        len: points.length
+                    });
+                });
+            });
+
+            svgGroup.selectAll(".user-trail")
+                .data(trailData)
+                .enter()
+                .append("circle")
+                .attr("class", "user-trail")
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y)
+                .attr("r", d => 2 + (d.age / d.len) * 2)
+                .attr("fill", "#22d3ee")
+                .attr("opacity", d => 0.12 + (d.age / d.len) * 0.28);
+
+            const userSel = svgGroup.selectAll(".user-node")
+                .data(positionedUsers, d => d.id);
+
+            userSel.join(
+                enter => enter.append("circle")
+                    .attr("class", "user user-node")
+                    .attr("r", 4)
+                    .attr("cx", d => d._gx)
+                    .attr("cy", d => d._gy)
+                    .on("mouseover", (event, d) => {
+                        tooltip
+                            .style("opacity", 1)
+                            .html(
+                                `<b>${d.id}</b><br>
+                            Floor: ${d.floor}<br>
+                            Room: ${d.room}<br>
+                            Assigned AP: ${d.assigned_ap || "—"}<br>
+                            Nearest AP: ${d.nearest_ap || "—"}<br>
+                            RSSI: ${d.RSSI}`
+                            )
+                            .style("left", event.pageX + 10 + "px")
+                            .style("top", event.pageY - 20 + "px");
+                    })
+                    .on("mouseout", () => tooltip.style("opacity", 0)),
+                update => update
+                    .transition()
+                    .duration(220)
+                    .ease(d3.easeLinear)
+                    .attr("cx", d => d._gx)
+                    .attr("cy", d => d._gy),
+                exit => exit.remove()
+            );
+
+            svgGroup.selectAll(".user-line-nearest")
+                .data(positionedUsers.filter(u => u.nearest_ap))
+                .enter()
+                .append("line")
+                .attr("class", "user-line-nearest")
+                .attr("stroke", "#475569")
+                .attr("stroke-width", 0.8)
+                .attr("stroke-dasharray", "3 3")
+                .attr("opacity", 0.8)
+                .attr("x1", d => d._gx)
+                .attr("y1", d => d._gy)
+                .attr("x2", d => {
+                    const ap = aps.find(a => a.id === d.nearest_ap);
+                    return ap ? ap._gx : d._gx;
+                })
+                .attr("y2", d => {
+                    const ap = aps.find(a => a.id === d.nearest_ap);
+                    return ap ? ap._gy : d._gy;
+                });
+
+            svgGroup.selectAll(".user-line-assigned")
+                .data(positionedUsers.filter(u => u.assigned_ap))
+                .enter()
+                .append("line")
+                .attr("class", "user-line-assigned")
+                .attr("stroke", "#38bdf8")
+                .attr("stroke-width", 1.2)
+                .attr("opacity", 0.45)
+                .attr("x1", d => d._gx)
+                .attr("y1", d => d._gy)
+                .attr("x2", d => {
+                    const ap = aps.find(a => a.id === d.assigned_ap);
+                    return ap ? ap._gx : d._gx;
+                })
+                .attr("y2", d => {
+                    const ap = aps.find(a => a.id === d.assigned_ap);
+                    return ap ? ap._gy : d._gy;
+                });
+
+            applyHeatmap(users);
+        }
+
+        function toggleHeatmap() {
+            heatmapEnabled = !heatmapEnabled;
+
+            const stateSpan = document.getElementById("heatmap-state");
+            stateSpan.textContent = heatmapEnabled ? "ON" : "OFF";
+            stateSpan.className = heatmapEnabled
+                ? "text-emerald-400 font-semibold"
+                : "text-slate-400 font-semibold";
+
+            updatesPanel.add(
+                heatmapEnabled ? "🔥 Heatmap enabled" : "🧊 Heatmap disabled",
+                heatmapEnabled ? "new" : "warn"
+            );
+
+            if (lastState) {
+                applyHeatmap(lastState.clients || []);
+            }
+        }
+
+
+        // ============================================================
+        // 🔥 NEW: SCHEDULED REDRAW (Option A)
+        // ============================================================
+        function requestRedraw() {
+            if (!latestSimState) return;
+
+            const now = performance.now();
+            if (redrawInProgress) {
+                // already drawing this frame, just keep latestSimState updated
+                return;
+            }
+            if (now - lastRedrawTime < MIN_REDRAW_INTERVAL) {
+                // too soon since last draw, skip this one but keep state
+                return;
+            }
+
+            redrawInProgress = true;
+            requestAnimationFrame(() => {
+                try {
+                    redrawState(latestSimState);
+                    lastRedrawTime = performance.now();
+                } catch (e) {
+                    console.error("🔥 redrawState error:", e);
+                    debugLog.error("redrawState crashed, see console");
+                } finally {
+                    redrawInProgress = false;
+                }
+            });
+        }
+
+        // ============================================================
+        // WEBSOCKET CONNECTION (ROBUST)
+        // ============================================================
+        function connectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+
+            debugLog.info(`Connecting to ${CONFIG.WS_URL}...`);
+            updateWSStatus('connecting');
+
+            try {
+                ws = new WebSocket(CONFIG.WS_URL);
+
+                ws.onopen = () => {
+                    debugLog.success('WebSocket connected!');
+                    updateWSStatus('connected');
+                    lastDataReceived = Date.now();
+                    startHeartbeat();
+                };
+
+                ws.onmessage = (event) => {
+                    lastDataReceived = Date.now();
+
+                    let data;
+                    try {
+                        data = JSON.parse(event.data);
+                    } catch (error) {
+                        debugLog.error(`Failed to parse message: ${error.message}`);
+                        return;
+                    }
+
+                    // unwrap {type:"state", data:{...}}
+                    const payload = data?.data || data;
+
+                    // alarms
+                    if (payload.alarms && payload.alarms.length > 0) {
+                        payload.alarms.forEach(a => {
+                            updatesPanel.add(`⚠️ ${a.msg}`, "warn");
+                            showAlarm(a.msg);
+                        });
+                    }
+
+                    // valid sim state?
+                    if (payload.aps && payload.clients) {
+                        latestSimState = payload;
+                        requestRedraw();
+                    } else {
+                        debugLog.warn("WS packet did not include aps/clients");
+                    }
+                };
+
+
+                ws.onerror = (error) => {
+                    debugLog.error('WebSocket error');
+                    console.error(error);
+                };
+
+                ws.onclose = () => {
+                    debugLog.warn('WebSocket disconnected');
+                    updateWSStatus('disconnected');
+                    stopHeartbeat();
+                    scheduleReconnect();
+                };
+
+            } catch (error) {
+                debugLog.error(`WebSocket connection failed: ${error.message}`);
+                scheduleReconnect();
+            }
+        }
+
+        function updateWSStatus(status) {
+            const statusEl = document.getElementById('ws-status');
+            const dot = statusEl.querySelector('.status-dot');
+            const text = statusEl.querySelector('span:last-child');
+
+            if (status === 'connected') {
+                dot.className = 'status-dot status-online';
+                text.textContent = 'Connected';
+            } else if (status === 'connecting') {
+                dot.className = 'status-dot status-connecting';
+                text.textContent = 'Connecting...';
+            } else {
+                dot.className = 'status-dot status-offline';
+                text.textContent = 'Disconnected';
+            }
+        }
+
+        function scheduleReconnect() {
+            if (reconnectTimer) return;
+
+            debugLog.info(`Reconnecting in ${CONFIG.RECONNECT_DELAY / 1000}s...`);
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connectWebSocket();
+            }, CONFIG.RECONNECT_DELAY);
+        }
+
+        function startHeartbeat() {
+            stopHeartbeat();
+            heartbeatTimer = setInterval(() => {
+                const timeSinceData = Date.now() - lastDataReceived;
+                if (timeSinceData > 10000) {
+                    // could log if needed
+                }
+            }, CONFIG.HEARTBEAT_INTERVAL);
+        }
+
+        function stopHeartbeat() {
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+                heartbeatTimer = null;
+            }
+        }
+
+        function reconnectWebSocket() {
+            debugLog.info('Manual reconnect requested');
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            connectWebSocket();
+        }
+
+        // ============================================================
+        // BACKEND TEST
+        // ============================================================
+        async function testBackend() {
+            debugLog.info('🔍 Testing backend connection...');
+
+            try {
+                debugLog.info('Testing /status endpoint...');
+                try {
+                    const statusResp = await fetch(`${CONFIG.API_URL}/status`);
+                    if (statusResp.ok) {
+                        const status = await statusResp.json();
+                        debugLog.success(`Backend status: ${JSON.stringify(status)}`);
+                    } else {
+                        debugLog.warn(`Status check returned ${statusResp.status} (might not exist)`);
+                    }
+                } catch (e) {
+                    debugLog.warn(`Status check failed: ${e.message}`);
+                }
+
+                debugLog.info('Testing /state endpoint...');
+                const stateResp = await fetch(`${CONFIG.API_URL}/state`);
+
+                if (!stateResp.ok) {
+                    debugLog.error(`State check failed: HTTP ${stateResp.status}`);
+                    return;
+                }
+
+                const state = await stateResp.json();
+                debugLog.success(`Got state: ${state.aps?.length || 0} APs, ${state.clients?.length || 0} users`);
+
+                if (state.aps) {
+                    debugLog.info('Updating visualization with REST data...');
+                    latestSimState = state;
+                    requestRedraw();
+                }
+
+            } catch (error) {
+                debugLog.error(`Backend test failed: ${error.message}`);
+                debugLog.error('Is backend running on port 8000?');
+            }
+        }
+
+
+
+        function zoomIn() {
+            svg.transition().call(zoom.scaleBy, 1.2);
+        }
+
+        function zoomOut() {
+            svg.transition().call(zoom.scaleBy, 0.8);
+        }
+
+        (async function main() {
+            debugLog.init();
+            updatesPanel.init();
+            updatesPanel.add("🚀 Frontend initialized", "new");
+            debugLog.info("🚀 Frontend starting...");
+
+            try {
+                await loadLayout();
+                debugLog.success("Layout loaded");
+
+                initSVG();
+                debugLog.success("SVG initialized");
+
+                drawStaticLayout();
+                debugLog.success("Campus drawn");
+
+                connectWebSocket();
+            } catch (err) {
+                debugLog.error(`Fatal error in main(): ${err.message}`);
+                console.error("💥 Fatal error in main():", err);
+            }
+        })();
+    </script>
+
 
 </body>
+
 </html>

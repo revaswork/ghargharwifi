@@ -1,0 +1,11 @@
+For backend:
+
+cd WifiLoadBalancing/src
+.\.venv\Scripts\activate
+python simulation/generate_initial_data.py
+uvicorn main:app --reload --port 8000  
+
+For frontend:
+Right-click on index.html -> Open with Live Server
+
+
