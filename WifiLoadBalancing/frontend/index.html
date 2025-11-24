@@ -68,10 +68,17 @@
             ry: 10;
         }
 
-        .user {
+        .user:not(.apkiller) {
             fill: #22d3ee;
             transition: 0.25s;
         }
+
+        .apkiller {
+            fill: #ff0000 !important;
+            r: 8 !important;
+            filter: drop-shadow(0 0 10px #ff2222);
+        }
+
 
         .user:hover {
             r: 7 !important;
@@ -266,6 +273,11 @@
             border-left-color: #ef4444;
         }
 
+        .apkiller {
+            filter: drop-shadow(0 0 8px #ff4444);
+        }
+
+
     </style>
 </head>
 
@@ -350,8 +362,33 @@
         </div>
 
         <div class="text-xs mb-1 font-semibold">Console Log</div>
-        <div id="debug-console" class="glass-soft p-2 debug-panel rounded">
+        <div id="debug-console" class="glass-soft p-2 debug-panel rounded"></div> 
             <!-- logs go here -->
+
+        <hr class="border-slate-600/50 my-3">
+
+        <div class="text-xs font-semibold mb-2">AP-Killer</div>
+
+        <button onclick="deployAPKiller()" class="btn-glass w-full mb-2">
+            🚀 Deploy AP-Killer
+        </button>
+
+        <button onclick="withdrawAPKiller()" class="btn-glass w-full mb-2">
+            🛑 Remove AP-Killer
+        </button>
+
+        <div class="glass-soft p-2 text-xs mt-2">
+            <div class="flex items-center justify-between mb-1">
+                <span>floor-level</span>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <button class="btn-glass" onclick="apkFloorDown()">−</button>
+                <span id="apk-floor" class="text-cyan-300 font-semibold">1</span>
+                <button class="btn-glass" onclick="apkFloorUp()">+</button>
+            </div>
+        </div>
+
         </div>
     </div>
 
@@ -367,6 +404,7 @@
         <div class="text-sm font-semibold mb-2">System Updates</div>
         <div id="updates-content" class="space-y-2 max-h-48 overflow-y-auto pr-1"></div>
     </div>
+
 
     <script>
         let LAYOUT = null;
@@ -953,7 +991,7 @@
                 .attr("cx", d => d.x)
                 .attr("cy", d => d.y)
                 .attr("r", d => 2 + (d.age / d.len) * 2)
-                .attr("fill", "#22d3ee")
+                .attr("fill", d => d.id === "AP-KILLER" ? "#ff0000" : "#22d3ee")
                 .attr("opacity", d => 0.12 + (d.age / d.len) * 0.28);
 
             const userSel = svgGroup.selectAll(".user-node")
@@ -961,33 +999,40 @@
 
             userSel.join(
                 enter => enter.append("circle")
-                    .attr("class", "user user-node")
-                    .attr("r", 4)
+                    .attr("class", d =>
+                        d.id === "AP-KILLER"
+                            ? "user user-node apkiller"
+                            : "user user-node"
+                    )
+                    .attr("r", d => d.id === "AP-KILLER" ? 6 : 4)
+                    .attr("fill", d => d.id === "AP-KILLER" ? "#ff4444" : "#22d3ee")
                     .attr("cx", d => d._gx)
                     .attr("cy", d => d._gy)
                     .on("mouseover", (event, d) => {
-                        tooltip
-                            .style("opacity", 1)
+                        tooltip.style("opacity", 1)
                             .html(
                                 `<b>${d.id}</b><br>
-                            Floor: ${d.floor}<br>
-                            Room: ${d.room}<br>
-                            Assigned AP: ${d.assigned_ap || "—"}<br>
-                            Nearest AP: ${d.nearest_ap || "—"}<br>
-                            RSSI: ${d.RSSI}`
+                                Floor: ${d.floor}<br>
+                                Room: ${d.room}<br>
+                                Assigned AP: ${d.assigned_ap || "—"}<br>
+                                Nearest AP: ${d.nearest_ap || "—"}<br>
+                                RSSI: ${d.RSSI}`
                             )
                             .style("left", event.pageX + 10 + "px")
                             .style("top", event.pageY - 20 + "px");
                     })
                     .on("mouseout", () => tooltip.style("opacity", 0)),
+
                 update => update
                     .transition()
                     .duration(220)
                     .ease(d3.easeLinear)
                     .attr("cx", d => d._gx)
                     .attr("cy", d => d._gy),
+
                 exit => exit.remove()
             );
+
 
             svgGroup.selectAll(".user-line-nearest")
                 .data(positionedUsers.filter(u => u.nearest_ap))
@@ -1028,7 +1073,51 @@
                     return ap ? ap._gy : d._gy;
                 });
 
+            // 🔥 AP-KILLER RED LINE INSERTED HERE
+            const killer = positionedUsers.find(u => u.id === "AP-KILLER");
+
+            if (killer) {
+                let nearestAP = null;
+                let bestDist = Infinity;
+
+                aps.forEach(ap => {
+                    if (ap.floor === killer.floor) {
+                        const dist = Math.hypot(killer._gx - ap._gx, killer._gy - ap._gy);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            nearestAP = ap;
+                        }
+                    }
+                });
+
+                const killerLine = svgGroup.selectAll(".apkiller-line")
+                    .data(nearestAP ? [ { killer, nearestAP } ] : []);
+
+                killerLine.join(
+                    enter => enter.append("line")
+                        .attr("class", "apkiller-line")
+                        .attr("stroke", "red")
+                        .attr("stroke-width", 2)
+                        .attr("stroke-dasharray", "6 4")
+                        .attr("opacity", 0.9)
+                        .attr("x1", d => d.killer._gx)
+                        .attr("y1", d => d.killer._gy)
+                        .attr("x2", d => d.nearestAP._gx)
+                        .attr("y2", d => d.nearestAP._gy),
+
+                    update => update
+                        .attr("x1", d => d.killer._gx)
+                        .attr("y1", d => d.killer._gy)
+                        .attr("x2", d => d.nearestAP._gx)
+                        .attr("y2", d => d.nearestAP._gy),
+
+                    exit => exit.remove()
+                );
+            }
+
+
             applyHeatmap(users);
+
         }
 
         function toggleHeatmap() {
@@ -1258,6 +1347,56 @@
         function zoomOut() {
             svg.transition().call(zoom.scaleBy, 0.8);
         }
+        
+        let apkFloor = 1;
+
+        function deployAPKiller() {
+            fetch(`${CONFIG.API_URL}/apkiller/deploy`, { method: "POST" });
+        }
+
+        function withdrawAPKiller() {
+            fetch(`${CONFIG.API_URL}/apkiller/withdraw`, { method: "POST" });
+        }
+
+        function apkFloorUp() {
+            apkFloor = Math.min(7, apkFloor + 1);
+            document.getElementById("apk-floor").innerText = apkFloor;
+            fetch(`${CONFIG.API_URL}/apkiller/floor/${apkFloor}`, { method: "POST" });
+        }
+
+        function apkFloorDown() {
+            apkFloor = Math.max(1, apkFloor - 1);
+            document.getElementById("apk-floor").innerText = apkFloor;
+            fetch(`${CONFIG.API_URL}/apkiller/floor/${apkFloor}`, { method: "POST" });
+        }
+
+        let apkControls = { up: false, down: false, left: false, right: false };
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "w" || e.key === "ArrowUp") apkControls.up = true;
+            if (e.key === "s" || e.key === "ArrowDown") apkControls.down = true;
+            if (e.key === "a" || e.key === "ArrowLeft") apkControls.left = true;
+            if (e.key === "d" || e.key === "ArrowRight") apkControls.right = true;
+        });
+
+        document.addEventListener("keyup", (e) => {
+            if (e.key === "w" || e.key === "ArrowUp") apkControls.up = false;
+            if (e.key === "s" || e.key === "ArrowDown") apkControls.down = false;
+            if (e.key === "a" || e.key === "ArrowLeft") apkControls.left = false;
+            if (e.key === "d" || e.key === "ArrowRight") apkControls.right = false;
+        });
+
+        // send velocity to backend every 80ms
+        setInterval(() => {
+            const vx = (apkControls.left ? -1 : 0) + (apkControls.right ? 1 : 0);
+            const vy = (apkControls.up ? -1 : 0) + (apkControls.down ? 1 : 0);
+
+            fetch(`${CONFIG.API_URL}/apkiller/move`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ vx, vy })
+            });
+        }, 80);
 
         (async function main() {
             debugLog.init();
@@ -1281,6 +1420,7 @@
                 console.error("💥 Fatal error in main():", err);
             }
         })();
+
     </script>
 
 

@@ -97,6 +97,9 @@ class WifiSimulator:
             user.setdefault("connected_ap", user.get("assigned_ap"))
             user.setdefault("airtime_usage", user.get("airtime_usage", 1))
             user.setdefault("RSSI", user.get("RSSI", -95))
+            
+        from .ap_killer import APKiller
+        self.ap_killer = APKiller(self)
 
         print("✅ Simulator initialized")
         print(f"   APs: {len(self.aps)}")
@@ -576,6 +579,14 @@ class WifiSimulator:
             print(f"🔥 Error in step(): {e}")
             import traceback
             traceback.print_exc()
+        
+        # 4. AP-Killer effect
+        if self.ap_killer.active:
+            rooms = [r for f in self.campus_layout if f["level"] == self.ap_killer.floor for r in f["rooms"]]
+            self.ap_killer.update(self.aps, rooms)
+
+
+
 
     # ====================================================================
     # COORD TRANSFORM (BACKEND VIEW -> FRONTEND GLOBAL)
@@ -601,6 +612,9 @@ class WifiSimulator:
     # ====================================================================
     def get_state(self):
         try:
+            # --------------------------
+            # AP LIST
+            # --------------------------
             aps_out = []
             for ap in self.aps:
                 gx, gy = self.to_global(ap.get("floor"), ap.get("x"), ap.get("y"))
@@ -625,7 +639,11 @@ class WifiSimulator:
                 }
                 aps_out.append(ap_copy)
 
+            # --------------------------
+            # USER LIST
+            # --------------------------
             users_out = []
+
             for u in self.clients:
                 gx, gy = self.to_global(u.get("floor"), u.get("x"), u.get("y"))
 
@@ -645,8 +663,39 @@ class WifiSimulator:
                     "airtime_usage": safe_int(u.get("airtime_usage", 1)),
                     "RSSI": safe_int(u.get("RSSI", -95)),
                 }
+
                 users_out.append(u_copy)
 
+            # --------------------------
+            # AP-KILLER (added ONCE)
+            # --------------------------
+            if self.ap_killer.active:
+                gx, gy = self.to_global(
+                    self.ap_killer.floor,
+                    self.ap_killer.x,
+                    self.ap_killer.y
+                )
+
+                users_out.append({
+                    "id": "AP-KILLER",
+                    "floor": self.ap_killer.floor,
+                    "room": "Corridor",
+                    "x": self.ap_killer.x,
+                    "y": self.ap_killer.y,
+                    "_gx": gx,
+                    "_gy": gy,
+                    "vx": self.ap_killer.vx,
+                    "vy": self.ap_killer.vy,
+                    "nearest_ap": self.ap_killer.get_nearest_ap_id(self.aps),
+                    "assigned_ap": None,
+                    "connected_ap": None,
+                    "airtime_usage": 10,
+                    "RSSI": -20
+                })
+
+            # --------------------------
+            # FINAL RETURN
+            # --------------------------
             return {
                 "aps": aps_out,
                 "clients": users_out,
@@ -664,3 +713,4 @@ class WifiSimulator:
                 "assignments": {},
                 "alarms": [],
             }
+

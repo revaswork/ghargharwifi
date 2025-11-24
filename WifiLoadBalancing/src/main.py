@@ -1,9 +1,11 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
 from simulation.simulator import WifiSimulator
 
 
@@ -214,6 +216,26 @@ async def remove_user(floor: int):
     sim.remove_user_from_floor(floor)
     return {"status": "ok", "floor": floor}
 
+@app.post("/apkiller/deploy")
+async def deploy_apkiller():
+    sim.ap_killer.deploy()
+    return {"status": "deployed"}
+
+@app.post("/apkiller/withdraw")
+async def withdraw_apkiller():
+    sim.ap_killer.withdraw()
+    return {"status": "removed"}
+
+@app.post("/apkiller/floor/{level}")
+async def move_apkiller(level: int):
+    sim.ap_killer.set_floor(level)
+    return {"status": "moved", "floor": level}
+
+@app.post("/apkiller/move")
+async def move_apkiller(data: dict):
+    sim.ap_killer.vx = data.get("vx", 0) * 6
+    sim.ap_killer.vy = data.get("vy", 0) * 6
+    return {"status": "ok"}
 
 # ============================================================
 # DIRECT RUN
