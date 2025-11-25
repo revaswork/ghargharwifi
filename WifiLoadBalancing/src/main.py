@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from simulation.simulator import WifiSimulator
-
+from pathlib import Path
+from fastapi import Request
 
 # ============================================================
 # GLOBAL STATE
@@ -147,6 +148,15 @@ app.add_middleware(
 )
 
 
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+CONFIG_PATH = DATA_DIR / "config.json"
+
+@app.post("/set_band")
+def set_band(band: str):
+    if band not in ["2.4", "5", "6"]:
+        return {"error": "Invalid band"}
+    CONFIG_PATH.write_text(json.dumps({"default_band": band}, indent=4))
+    return {"status": "ok", "band": band}
 # ============================================================
 # ROUTES
 # ============================================================
@@ -236,6 +246,21 @@ async def move_apkiller(data: dict):
     sim.ap_killer.vx = data.get("vx", 0) * 6
     sim.ap_killer.vy = data.get("vy", 0) * 6
     return {"status": "ok"}
+
+@app.post("/setband")
+async def setband(request: Request):
+    data = await request.json()
+    band = data["band"]
+
+    # Set global band
+    sim.current_band = band
+
+    # 🔥 FORCE band into every AP
+    for ap in sim.aps:
+        ap["band"] = band
+        ap["coverage_radius"] = sim.band_coverage[band]
+
+    return {"status": "ok", "band": band}
 
 # ============================================================
 # DIRECT RUN

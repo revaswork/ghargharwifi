@@ -289,7 +289,7 @@
 
     <!-- Header -->
     <header class="glass-panel w-full text-center py-4 text-xl font-semibold tracking-wide relative">
-        Campus WiFi Load Balancing — Live Multi-Floor Visualization
+        AP ka AATANK — Live Multi-Floor Visualization
         <div class="absolute right-6 top-1/2 -translate-y-1/2 text-xs font-normal flex items-center gap-3">
             <span id="ws-status" class="flex items-center">
                 <span class="status-dot status-offline"></span>
@@ -315,7 +315,7 @@
     </div>
 
     <!-- Legend + Heatmap toggle -->
-    <div class="glass-panel fixed right-4 top-24 text-sm p-4 z-20 w-72">
+    <div class="glass-panel fixed right-4 top-20 text-sm p-4 z-20 w-72">
         <b class="text-lg">Legend</b><br><br>
         <div class="space-y-1">
             <div class="flex items-center gap-2">
@@ -369,23 +369,40 @@
 
         <div class="text-xs font-semibold mb-2">AP-Killer</div>
 
-        <button onclick="deployAPKiller()" class="btn-glass w-full mb-2">
-            🚀 Deploy AP-Killer
-        </button>
-
-        <button onclick="withdrawAPKiller()" class="btn-glass w-full mb-2">
-            🛑 Remove AP-Killer
-        </button>
-
-        <div class="glass-soft p-2 text-xs mt-2">
-            <div class="flex items-center justify-between mb-1">
-                <span>floor-level</span>
+        <div class="glass-soft p-2 text-xs flex items-center justify-between gap-2">
+            <!-- Left column: Deploy / Withdraw -->
+            <div class="flex flex-col gap-2">
+                <button onclick="deployAPKiller()" class="btn-glass px-8 py-1 text-[10px]">
+                  🚀 Deploy
+                </button>
+                <button onclick="withdrawAPKiller()" class="btn-glass px-8 py-1 text-[10px]">
+                  🛑 Recall
+                </button>
             </div>
 
-            <div class="flex items-center gap-2">
-                <button class="btn-glass" onclick="apkFloorDown()">−</button>
-                <span id="apk-floor" class="text-cyan-300 font-semibold">1</span>
-                <button class="btn-glass" onclick="apkFloorUp()">+</button>
+            <!-- Right column: Floor + / - -->
+            <div class="flex flex-col items-center gap-1">
+
+                <div class="flex items-center gap-1">
+                    <button class="btn-glass px-4 py-1 text-[20px]" onclick="apkFloorDown()">−</button>
+
+                    <span id="apk-floor" class="text-cyan-300 font-semibold text-[14px] px-[2px]">
+                        1
+                    </span>
+
+                    <button class="btn-glass px-4 py-1 text-[20px]" onclick="apkFloorUp()">+</button>
+                </div>
+            </div>
+        </div>
+
+
+        <div class="glass-soft p-3 mt-4 text-xs">
+            <div class="mb-2 font-semibold text-slate-200">Set WiFi Band</div>
+
+            <div class="grid grid-cols-3 gap-2">
+                <button class="btn-glass band-btn" data-band="2.4">2.4</button>
+                <button class="btn-glass band-btn" data-band="5">5</button>
+                <button class="btn-glass band-btn" data-band="6">6</button>
             </div>
         </div>
 
@@ -393,7 +410,7 @@
     </div>
 
     <!-- Zoom Controls -->
-    <div class="fixed bottom-6 right-6 flex gap-3 z-20">
+    <div class="fixed bottom-3 right-6 flex gap-3 z-20">
         <button onclick="zoomIn()" class="glass-panel px-4 py-2 rounded-lg text-lg hover:bg-white/10">+</button>
         <button onclick="zoomOut()" class="glass-panel px-4 py-2 rounded-lg text-lg hover:bg-white/10">−</button>
     </div>
@@ -412,13 +429,14 @@
         let zoom;
         let userTrails = {}; // id -> [{x,y}, ...]
         let lastState = null;
+        let floorAPAlertCooldown = {};  // floor -> timestamp
         let heatmapEnabled = false;
 
         // 🔥 NEW: client-side throttling state
         let latestSimState = null;
         let redrawInProgress = false;
         let lastRedrawTime = 0;
-        const MIN_REDRAW_INTERVAL = 150; // ms between redraws (≈6–7 FPS max)
+        const MIN_REDRAW_INTERVAL = 33; // ms between redraws (≈6–7 FPS max)
 
         // ============================================================
         // DEBUG LOGGER
@@ -503,7 +521,7 @@
         let heartbeatTimer = null;
         let lastDataReceived = 0;
 
-        const MAX_TRAIL_POINTS = 5;
+        const MAX_TRAIL_POINTS = 1;
         const AP_RANGE_DEFAULT = 100;
 
         // floor level -> yTop in SVG coords
@@ -886,6 +904,36 @@
             updateStatsPanel(aps, users);
             buildSidebar(aps, users);
 
+            // -----------------------------------------------------------
+            // 🔥 FLOOR AP HIGH LOAD ALERT SYSTEM
+            // -----------------------------------------------------------
+            LAYOUT.floors.forEach(floor => {
+                const level = floor.level;
+
+                // All APs on this floor
+                const floorAps = aps.filter(ap => ap.floor === level);
+
+                if (!floorAps.length) return;
+
+                // Count APs above 80% load
+                const highLoadAps = floorAps.filter(ap => (ap.load || 0) >= 85);
+
+                if (highLoadAps.length >= 2) {
+                    const now = Date.now();
+
+                    // If we haven't shown alert recently → show it
+                    if (!floorAPAlertCooldown[level] || now - floorAPAlertCooldown[level] > 10000) {
+                        floorAPAlertCooldown[level] = now;
+
+                        const msg = `⚠️ New AP is required on Floor ${level}`;
+                        updatesPanel.add(msg, "warn");
+                        showAlarm(msg);
+                        debugLog.warn(msg);
+                    }
+                }
+            });
+
+
             svgGroup.selectAll(".ap-node").remove();
             svgGroup.selectAll(".user-line-nearest").remove();
             svgGroup.selectAll(".user-line-assigned").remove();
@@ -925,25 +973,37 @@
                 .attr("opacity", 0.9);
 
             apGroup.append("circle")
-                .attr("r", d => 10 + (d.load / 100) * 14)
-                .attr("fill", d => apColor(d.load))
-                .attr("class", d => d.load > 80 ? "ap-glow" : "")
-                .on("mouseover", (event, d) => {
-                    const maxUsers = d.max_users || d.max_clients || 30;
-                    tooltip
-                        .style("opacity", 1)
-                        .html(
-                            `<b>${d.id}</b><br>
+            .attr("r", d => 10 + (d.load / 100) * 14)
+            .attr("fill", d => apColor(d.load))
+            .attr("class", d => d.load > 80 ? "ap-glow" : "")
+            .on("mouseover", (event, d) => {
+                const maxUsers   = d.max_users || d.max_clients || 30;
+                const band =
+                    (typeof d.band === "string" && d.band.length > 0)
+                        ? d.band
+                        : (typeof d.band_support === "string" && d.band_support.length > 0
+                            ? d.band_support
+                            : "Unknown");
+                const load       = (typeof d.load === "number") ? d.load.toFixed(1) : (d.load || 0);
+                const rssiAvg =
+                    (typeof d.avg_RSSI === "number")
+                        ? `${d.avg_RSSI} dBm`
+                        : (typeof d.RSSI === "number" ? `${d.RSSI} dBm` : "N/A");
+
+                tooltip
+                    .style("opacity", 1)
+                    .html(
+                        `<b>${d.id}</b><br>
                         Floor: ${d.floor}<br>
                         Room: ${d.room}<br>
-                        Load: ${d.load || 0}%<br>
-                        Clients (MCMF): ${d.client_count || 0}<br>
-                        Users via RSSI: ${d.user_count || 0}/${maxUsers}`
-                        )
-                        .style("left", event.pageX + 10 + "px")
-                        .style("top", event.pageY - 20 + "px");
-                })
-                .on("mouseout", () => tooltip.style("opacity", 0));
+                        Band: ${band}<br>
+                        Load: ${load}%<br>
+                        Connected users: ${d.client_count || 0}<br>`
+                    )
+                    .style("left", event.pageX + 10 + "px")
+                    .style("top", event.pageY - 20 + "px");
+            })
+            .on("mouseout", () => tooltip.style("opacity", 0));
 
             apGroup.append("text")
                 .attr("y", -25)
@@ -957,6 +1017,13 @@
                 if (!userTrails[u.id]) userTrails[u.id] = [];
             });
 
+            // Track previous AP assignment for each user
+            users.forEach(u => {
+                if (!u._lastAssigned) {
+                    u._lastAssigned = u.assigned_ap; // initialize
+                }
+            });
+
             const positionedUsers = users.map(d => {
                 const global = { x: d._gx, y: d._gy };
                 d._gx = global.x;
@@ -968,6 +1035,17 @@
                 userTrails[d.id] = trail;
 
                 return d;
+            });
+
+            // Detect AP changes → store previous AP for white dotted line
+            positionedUsers.forEach(u => {
+                if (!u._lastAssigned) {
+                    u._lastAssigned = u.assigned_ap;
+                }
+
+                // FORCE the dotted line even if AP did not change
+                u.previous_ap = u._lastAssigned;
+                u._lastAssigned = u.assigned_ap;
             });
 
             const trailData = [];
@@ -1009,19 +1087,25 @@
                     .attr("cx", d => d._gx)
                     .attr("cy", d => d._gy)
                     .on("mouseover", (event, d) => {
-                        tooltip.style("opacity", 1)
+                        const rssi = (typeof d.RSSI !== "undefined") ? `${d.RSSI} dBm` : "N/A";
+                        const userLoad = (typeof d.load === "number") ? `${d.load.toFixed(1)}%` : "N/A";
+
+                        tooltip
+                            .style("opacity", 1)
                             .html(
                                 `<b>${d.id}</b><br>
                                 Floor: ${d.floor}<br>
                                 Room: ${d.room}<br>
                                 Assigned AP: ${d.assigned_ap || "—"}<br>
                                 Nearest AP: ${d.nearest_ap || "—"}<br>
-                                RSSI: ${d.RSSI}`
+                                RSSI: ${rssi}<br>
+                                User load: ${userLoad}`
                             )
                             .style("left", event.pageX + 10 + "px")
                             .style("top", event.pageY - 20 + "px");
                     })
                     .on("mouseout", () => tooltip.style("opacity", 0)),
+
 
                 update => update
                     .transition()
@@ -1053,6 +1137,28 @@
                     const ap = aps.find(a => a.id === d.nearest_ap);
                     return ap ? ap._gy : d._gy;
                 });
+            
+            svgGroup.selectAll(".user-line-prev").remove();
+
+            svgGroup.selectAll(".user-line-prev")
+                .data(positionedUsers.filter(u => u.previous_ap))
+                .enter()
+                .append("line")
+                .attr("class", "user-line-prev")
+                .attr("stroke", "#ffffff")
+                .attr("stroke-width", 1)
+                .attr("stroke-dasharray", "4 4")
+                .attr("opacity", 0.25)
+                .attr("x1", d => d._gx)
+                .attr("y1", d => d._gy)
+                .attr("x2", d => {
+                    const ap = aps.find(a => a.id === d.previous_ap);
+                    return ap ? ap._gx : d._gx;
+                })
+                .attr("y2", d => {
+                    const ap = aps.find(a => a.id === d.previous_ap);
+                    return ap ? ap._gy : d._gy;
+                });    
 
             svgGroup.selectAll(".user-line-assigned")
                 .data(positionedUsers.filter(u => u.assigned_ap))
@@ -1368,7 +1474,35 @@
             apkFloor = Math.max(1, apkFloor - 1);
             document.getElementById("apk-floor").innerText = apkFloor;
             fetch(`${CONFIG.API_URL}/apkiller/floor/${apkFloor}`, { method: "POST" });
-        }
+        }   
+
+        // --- Band control buttons ---
+        document.querySelectorAll(".band-btn").forEach(btn => {
+            btn.onclick = async () => {
+                const band = btn.getAttribute("data-band");
+
+                debugLog.info(`Switching band to ${band}...`);
+
+                try {
+                    const resp = await fetch(`${CONFIG.API_URL}/setband`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ band }),
+                    });
+
+                    if (resp.ok) {
+                        debugLog.success(`Band set to ${band}`);
+                        updatesPanel.add(`📡 WiFi Band changed to <b>${band} GHz</b>`, "new");
+                    } else {
+                        debugLog.error("Backend rejected band change");
+                    }
+                } catch (err) {
+                    debugLog.error("Failed to send band update");
+                    console.error(err);
+                }
+            };
+        });
+
 
         let apkControls = { up: false, down: false, left: false, right: false };
 
@@ -1398,6 +1532,7 @@
             });
         }, 80);
 
+        
         (async function main() {
             debugLog.init();
             updatesPanel.init();
@@ -1422,7 +1557,6 @@
         })();
 
     </script>
-
 
 </body>
 

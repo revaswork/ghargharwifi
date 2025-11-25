@@ -9,7 +9,9 @@ from algorithms.greedy_redistribution import GreedyRedistributor
 # ----------------------------------------------------------------------
 # PATHS - Correct for your project structure
 # ----------------------------------------------------------------------
-ROOT_DIR = Path(__file__).resolve().parents[2]
+CURRENT = Path(__file__).resolve()
+SIM_DIR = CURRENT.parents[1]
+ROOT_DIR = SIM_DIR.parent
 DATA_DIR = ROOT_DIR / "data"
 LAYOUT_PATH = ROOT_DIR / "frontend" / "data" / "campus_layout.json"
 
@@ -79,6 +81,18 @@ class WifiSimulator:
         self._ap_alarm_memory = set()
         self.tick = 0
         self.ready = False
+        self.current_band = "5"  # default
+        
+        self.band_coverage = {
+            "2.4": 800,   # massive campus coverage
+            "5":   320,   # moderate
+            "6":   120,   # tiny
+        }
+        self.band_pathloss = {
+            "2.4": 20,
+            "5":   22,
+            "6":   24,
+        }
 
         # Initialize AP fields
         for ap in self.aps:
@@ -140,7 +154,7 @@ class WifiSimulator:
     # ====================================================================
     def move_users(self):
         """Move users with full validation and bounce physics."""
-        BASE_MIN, BASE_MAX = 0.5, 1.5
+        BASE_MIN, BASE_MAX = 1, 2
 
         for user in self.clients:
             bounds = self.get_user_room_bounds(user)
@@ -231,22 +245,27 @@ class WifiSimulator:
         return max(-95, min(-40, rssi))
 
     def update_rssi(self):
-        """Update RSSI for all users - floor-restricted with coverage check."""
+        """Update RSSI for all users - band-restricted with disconnection."""
         for user in self.clients:
             u_floor = user.get("floor")
 
-            # Get APs on same floor
+            # APs on same floor
             floor_aps = [ap for ap in self.aps if ap["floor"] == u_floor]
 
             if not floor_aps:
+                # 🔥 DISCONNECTION: floor has no APs
                 user["nearest_ap"] = None
+                user["connected_ap"] = None
+                user["assigned_ap"] = None
                 user["RSSI"] = -95
                 continue
 
             best_ap = None
             best_rssi = -95
 
-            # Find best AP within coverage
+            # --------------------------------------------------------------
+            # BAND-DEPENDENT COVERAGE + BAND-DEPENDENT RSSI
+            # --------------------------------------------------------------
             for ap in floor_aps:
                 try:
                     dist = math.dist(
@@ -256,47 +275,39 @@ class WifiSimulator:
                 except Exception:
                     continue
 
-                if dist > ap.get("coverage_radius", 200):
+                # ❗ Disconnect user if outside CURRENT BAND range
+                if dist > self.band_coverage[self.current_band]:
                     continue
 
-                rssi = self.calc_rssi(dist)
+                band = ap.get("band", self.current_band)
+                loss = self.band_pathloss.get(band, 22)
+
+                rssi = -30 - loss * math.log10(max(dist, 1e-3))
+                rssi = max(-95, min(-40, rssi))
+
                 if rssi > best_rssi:
                     best_rssi = rssi
                     best_ap = ap["id"]
 
-            # Fallback to closest AP if none in coverage
+            # --------------------------------------------------------------
+            # 🛑 DISCONNECTION ZONE
+            # If NO AP in band range → user disappears
+            # --------------------------------------------------------------
             if best_ap is None:
-                # if somehow no AP exists on this floor → default safe values
-                if not floor_aps:
-                    user["nearest_ap"] = None
-                    user["RSSI"] = -95
-                    continue
+                user["nearest_ap"] = None
+                user["connected_ap"] = None
+                user["assigned_ap"] = None
+                user["RSSI"] = -95
+                continue
 
-                # compute closest AP safely
-                try:
-                    closest_ap = min(
-                        floor_aps,
-                        key=lambda ap: math.dist(
-                            (safe_float(user["x"]), safe_float(user["y"])),
-                            (safe_float(ap["x"]), safe_float(ap["y"]))
-                        )
-                    )
-                except Exception:
-                    # absolute safety fallback
-                    user["nearest_ap"] = None
-                    user["RSSI"] = -95
-                    continue
-
-                best_ap = closest_ap["id"]
-
-                dist = math.dist(
-                    (safe_float(user["x"]), safe_float(user["y"])),
-                    (safe_float(closest_ap["x"]), safe_float(closest_ap["y"]))
-                )
-                best_rssi = self.calc_rssi(dist)
-
+            # --------------------------------------------------------------
+            # ✅ RECONNECTION ZONE (user visible again)
+            # --------------------------------------------------------------
             user["nearest_ap"] = best_ap
+            user["assigned_ap"] = best_ap      # ← YOU MUST HAVE THIS
+            user["connected_ap"] = best_ap     # ← AND THIS
             user["RSSI"] = int(best_rssi)
+
 
     # ====================================================================
     # AP LOAD CALCULATION & ALARMS
@@ -309,16 +320,17 @@ class WifiSimulator:
         for ap in self.aps:
             ap["user_count"] = 0
 
-        # Count users per AP — USE assigned_ap FIRST
+        # Count only users truly connected under NEW BAND CONDITIONS
         for user in self.clients:
-            ap_id = user.get("assigned_ap") or user.get("nearest_ap")
+            ap_id = user.get("assigned_ap")      # ← NO FALLBACK
             if not ap_id:
-                continue
+                continue                         # user dropped due to band
 
             for ap in self.aps:
                 if ap["id"] == ap_id:
                     ap["user_count"] += 1
                     break
+
 
     # ====================================================================
     # MCMF WITH GREEDY FALLBACK (EXPERIMENTAL, NOT USED IN LIVE LOOP)
@@ -396,6 +408,12 @@ class WifiSimulator:
                 if user["assigned_ap"] == ap_id:
                     ap["connected_clients"].append(user["id"])
 
+    def _is_user_in_band(self, user) -> bool:
+        """
+        A user is considered 'in-band' if update_rssi found at least one AP
+        within the current band's coverage.
+        """
+        return bool(user.get("nearest_ap"))
 
     # ====================================================================
     # GREEDY REDISTRIBUTION
@@ -403,23 +421,39 @@ class WifiSimulator:
     def apply_greedy(self):
         """
         Greedy load balancing with REAL NETWORK LOAD BEHAVIOR.
-        - AP load does NOT reset to zero every tick
-        - Load accumulates with more users
+        - Only IN-BAND users (by current_band) are considered
         - Load decays slowly (enterprise-style smoothing)
         """
 
-        # 1. Run greedy redistribution
-        GreedyRedistributor(self.aps, self.clients).redistribute()
+        # ✅ 1. Restrict to in-band users only
+        active_users = [u for u in self.clients if u.get("nearest_ap")]
 
-        # 2. Prepare smoother load logic
+        # If nobody is in range, just decay loads and bail
+        if not active_users:
+            LOAD_DECAY = 0.82
+            for ap in self.aps:
+                ap["load"] = max(0, ap.get("load", 0) * LOAD_DECAY)
+                ap["connected_clients"] = []
+            return
+
+        # ✅ 2. Run greedy ONLY on in-band users
+        GreedyRedistributor(self.aps, active_users).redistribute()
+
+        # After greedy.assignments:
+        for user in active_users:
+            ap_id = user.get("assigned_ap")
+            if ap_id:
+                user["connected_ap"] = ap_id
+
+        # ✅ 3. Prepare smoother load logic
         LOAD_DECAY = 0.82          # 82% of previous load kept each tick
         LOAD_GAIN_WEIGHT = 0.40    # 40% from new instantaneous load
 
         # Count new instantaneous load
         new_loads = {ap["id"]: 0 for ap in self.aps}
 
-        for user in self.clients:
-            aid = user.get("assigned_ap") or user.get("nearest_ap")
+        for user in active_users:
+            aid = user.get("assigned_ap")
             if not aid:
                 continue
             new_loads[aid] += user.get("airtime_usage", 1)
@@ -430,18 +464,16 @@ class WifiSimulator:
             prev_load = ap.get("load", 0)
             instant_load = new_loads.get(ap_id, 0)
 
-            # enterprise-style smoothing
             smoothed = prev_load * LOAD_DECAY + instant_load * LOAD_GAIN_WEIGHT
 
-            # clamp 0–100%
             ap["load"] = max(0, min(smoothed, 100))
 
-            # update connected client list
             ap["connected_clients"] = [
                 u["id"]
-                for u in self.clients
+                for u in active_users
                 if (u.get("assigned_ap") or u.get("nearest_ap")) == ap_id
             ]
+
 
 
     # ====================================================================
@@ -612,9 +644,7 @@ class WifiSimulator:
     # ====================================================================
     def get_state(self):
         try:
-            # --------------------------
-            # AP LIST
-            # --------------------------
+            # --- Pre-compute RSSI lists per AP ---
             aps_out = []
             for ap in self.aps:
                 gx, gy = self.to_global(ap.get("floor"), ap.get("x"), ap.get("y"))
@@ -628,6 +658,7 @@ class WifiSimulator:
                     "_gx": safe_float(gx),
                     "_gy": safe_float(gy),
                     "channel": ap.get("channel"),
+                    "band": ap.get("band", self.current_band),
                     "interference_score": safe_float(ap.get("interference_score", 0.0)),
                     "airtime_capacity": safe_int(ap.get("airtime_capacity", 100)),
                     "max_clients": safe_int(ap.get("max_clients", ap.get("max_users", 30))),
@@ -637,14 +668,22 @@ class WifiSimulator:
                     "user_count": safe_int(ap.get("user_count", 0)),
                     "load": safe_float(ap.get("load", 0.0)),
                 }
+
                 aps_out.append(ap_copy)
+
+
 
             # --------------------------
             # USER LIST
             # --------------------------
             users_out = []
 
-            for u in self.clients:
+            visible_users = [
+                u for u in self.clients
+                if u.get("assigned_ap") is not None or u.get("nearest_ap") is not None
+            ]
+
+            for u in visible_users:
                 gx, gy = self.to_global(u.get("floor"), u.get("x"), u.get("y"))
 
                 u_copy = {
@@ -665,7 +704,6 @@ class WifiSimulator:
                 }
 
                 users_out.append(u_copy)
-
             # --------------------------
             # AP-KILLER (added ONCE)
             # --------------------------

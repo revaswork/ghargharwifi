@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-generate_initial_data.py — OVERLOAD-PROOF EDITION
+generate_initial_data.py — BAND-NEUTRAL USER SPAWNING EDITION
 
+✔ Users spawn ANYWHERE inside valid rooms (no coverage restrictions)
+✔ Band coverage is handled ONLY by simulator.py (band switching makes users disappear)
 ✔ Balanced per-floor user distribution (using FLOOR_DENSITY)
 ✔ No AP starts above its user-count capacity (max_clients)
-✔ No AP starts above a safe airtime utilization
-✔ Users ALWAYS placed inside valid rooms
+✔ No AP starts above safe airtime utilization
 ✔ RSSI always valid (-95 to -40)
 ✔ Perfect compatibility with simulator.py
 """
@@ -16,12 +17,14 @@ import math
 from pathlib import Path
 
 # ---------------------------------------------------------
-# PATH CONFIG (correct for your project)
+# PATH CONFIG
 # ---------------------------------------------------------
-SCRIPT_DIR = Path(__file__).resolve()
-ROOT = SCRIPT_DIR.parents[2]            # WifiLoadBalancing/
+CURRENT = Path(__file__).resolve()
+SIM_DIR = CURRENT.parents[1]              # WifiLoadBalancing/src/simulation
+ROOT = SIM_DIR.parent                    # WifiLoadBalancing/
 OUT_DIR = ROOT / "data"
 LAYOUT_PATH = ROOT / "frontend" / "data" / "campus_layout.json"
+CONFIG_PATH = OUT_DIR / "config.json"
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -34,10 +37,48 @@ with open(LAYOUT_PATH, "r") as f:
 # ---------------------------------------------------------
 # GLOBAL SETTINGS
 # ---------------------------------------------------------
-TOTAL_USERS = 175               # target total users (will be respected if capacity allows)
-CHANNELS = [1, 6, 11]
+TOTAL_USERS = 175
 
-# Distribution chosen so no floor *logically* overloads its 2 APs
+CHANNELS_24 = [1, 6, 11]
+CHANNELS_5  = [36, 40, 44, 48]
+CHANNELS_6  = [5, 21, 37, 53, 69]
+
+CHANNELS_BY_BAND = {
+    "2.4": CHANNELS_24,
+    "5":   CHANNELS_5,
+    "6":   CHANNELS_6,
+}
+
+# Coverage IS NOT USED IN GENERATOR ANYMORE
+# (Only simulator checks coverage during runtime)
+BAND_COVERAGE = {
+    "2.4": 600,
+    "5":   450,
+    "6":   250,
+}
+
+BAND_PATHLOSS = {
+    "2.4": 20,
+    "5":   22,
+    "6":   24,
+}
+
+def load_config():
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                return json.load(f)
+        except:
+            print("⚠️ Failed to read config.json, using defaults")
+    return {}
+
+CONFIG = load_config()
+DEFAULT_BAND = CONFIG.get("default_band", "5")
+if DEFAULT_BAND not in CHANNELS_BY_BAND:
+    print(f"⚠️ Invalid default_band '{DEFAULT_BAND}' in config.json, using '5'")
+    DEFAULT_BAND = "5"
+
+# Floor population distribution
 FLOOR_DENSITY = {
     7: 0.18,
     6: 0.17,
@@ -48,96 +89,70 @@ FLOOR_DENSITY = {
     1: 0.09,
 }
 
-# Safety factor: we won't fill airtime to 100% at t = 0
-AIRTIME_UTILIZATION_SAFETY = 0.80     # 80% of airtime_capacity
-AVG_AIRTIME_PER_USER = 3.0           # rough average airtime_usage
+AIRTIME_UTILIZATION_SAFETY = 0.80
+AVG_AIRTIME_PER_USER = 3.0
 
 # ---------------------------------------------------------
 # HELPERS
 # ---------------------------------------------------------
-def find_floor(level: int):
+def find_floor(level):
     return next(f for f in FLOORS if f["level"] == level)
 
-
-def rand_point(room: dict):
-    """Return a point a few px away from walls = never out of bounds."""
+def rand_point(room):
     pad = 6
     return (
         room["x"] + pad + random.random() * (room["width"] - 2 * pad),
         room["y"] + pad + random.random() * (room["height"] - 2 * pad),
     )
 
-
-def dist(a, b) -> float:
+def dist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
-
-def rssi_from_dist(d: float) -> int:
+def rssi_from_dist(d, band):
+    loss = BAND_PATHLOSS.get(band, 22)
     if d <= 1:
         return -40
-    r = -30 - 20 * math.log10(d)
+    r = -30 - loss * math.log10(max(d, 1e-3))
     return max(-95, min(-40, int(r)))
 
+# AP interference model
+def compute_interference(ap, aps):
+    score = 0.0
+    for other in aps:
+        if other["id"] == ap["id"]:
+            continue
+        if other["band"] != ap["band"]:
+            continue
+        if other["channel"] == ap["channel"]:
+            score += 1.0
+        elif abs(other["channel"] - ap["channel"]) <= 5:
+            score += 0.5
+    return round(score, 2)
 
 # ---------------------------------------------------------
 # AP GENERATION
 # ---------------------------------------------------------
-def build_ap_positions():
-    """
-    Place 2 APs per floor in corridor: left & right thirds.
-    """
-    table = {}
-
-    for floor in FLOORS:
-        level = floor["level"]
-
-        corridor = next(
-            r for r in floor["rooms"] if r["name"].lower() == "corridor"
-        )
-
-        cx, cy = corridor["x"], corridor["y"]
-        cw, ch = corridor["width"], corridor["height"]
-
-        mid_y = cy + ch / 2
-        left_x = cx + cw * 0.33
-        right_x = cx + cw * 0.66
-
-        table[level] = [
-            (f"AP_{level}A", left_x, mid_y),
-            (f"AP_{level}B", right_x, mid_y),
-        ]
-
-    return table
-
-
-AP_POS = build_ap_positions()
-
-
 def generate_aps():
-    """
-    Build APs using the AP coordinates directly from campus_layout.json.
-    This ensures perfect alignment with the frontend and removes all drift.
-    """
     aps = []
 
     for floor in FLOORS:
         level = floor["level"]
 
-        # The new layout JSON already has AP coordinates embedded
         for apinfo in floor.get("aps", []):
             ap_id = apinfo["id"]
             x = apinfo["x"]
             y = apinfo["y"]
 
-            # Airtime capacity: rough estimate of airtime
             airtime_capacity = random.randint(90, 140)
-
-            # Safe usable airtime
             safe_airtime = airtime_capacity * AIRTIME_UTILIZATION_SAFETY
             derived_max_clients = int(safe_airtime / AVG_AIRTIME_PER_USER)
 
-            # Clamp range
             max_clients = max(18, min(derived_max_clients, 30))
+
+            ap_band = DEFAULT_BAND
+
+            band_channels = CHANNELS_BY_BAND[ap_band]
+            channel = band_channels[len(aps) % len(band_channels)]
 
             aps.append(
                 {
@@ -146,110 +161,63 @@ def generate_aps():
                     "room": "Corridor",
                     "x": x,
                     "y": y,
-                    "channel": random.choice(CHANNELS),
-                    "interference_score": round(random.uniform(0.05, 0.4), 2),
+                    "band": ap_band,
+                    "channel": channel,
+                    "interference_score": 0.0,
                     "airtime_capacity": airtime_capacity,
                     "max_clients": max_clients,
-                    "coverage_radius": 200,
+                    "coverage_radius": BAND_COVERAGE[ap_band],   # unused by generator
                     "client_count": 0,
                     "load": 0,
                 }
             )
 
+    for ap in aps:
+        ap["interference_score"] = compute_interference(ap, aps)
+
     return aps
 
 
 # ---------------------------------------------------------
-# USER GENERATION (OVERLOAD-PROOF)
+# USER GENERATION (NO COVERAGE LIMITS)
 # ---------------------------------------------------------
 def compute_floor_targets(aps):
-    """
-    Compute how many users to *try* to put on each floor, respecting:
-      - TOTAL_USERS budget
-      - Each floor's total max_clients (user-count capacity)
-    """
-    # Floor capacity = sum max_clients of APs on that floor
     floor_caps = {}
     for ap in aps:
         lvl = ap["floor"]
         floor_caps.setdefault(lvl, 0)
         floor_caps[lvl] += ap.get("max_clients", 20)
 
-    # Initial targets from FLOOR_DENSITY
     raw_targets = {
         lvl: int(TOTAL_USERS * FLOOR_DENSITY[lvl])
         for lvl in FLOOR_DENSITY
     }
 
-    # Fix rounding to match TOTAL_USERS
     diff = TOTAL_USERS - sum(raw_targets.values())
     if diff != 0:
-        # Add/subtract the difference on the highest floor as a simple fix
-        top_floor = max(FLOOR_DENSITY.keys())
-        raw_targets[top_floor] += diff
+        top = max(FLOOR_DENSITY.keys())
+        raw_targets[top] += diff
 
-    # Clip each floor by its capacity
     targets = {}
     for lvl, t in raw_targets.items():
         cap = floor_caps.get(lvl, 0)
-        # Don't try to place more users than physical slots
         targets[lvl] = min(t, cap)
-
-    # If we still have leftover capacity and haven't reached TOTAL_USERS,
-    # we can distribute extra users to floors with free slots.
-    placed = sum(targets.values())
-    leftover = max(0, TOTAL_USERS - placed)
-
-    if leftover > 0:
-        # Consider floors that still have spare capacity
-        floors_by_spare = sorted(
-            FLOOR_DENSITY.keys(),
-            key=lambda lvl: floor_caps.get(lvl, 0) - targets.get(lvl, 0),
-            reverse=True,
-        )
-        idx = 0
-        while leftover > 0 and floors_by_spare:
-            lvl = floors_by_spare[idx % len(floors_by_spare)]
-            spare = floor_caps.get(lvl, 0) - targets.get(lvl, 0)
-            if spare <= 0:
-                idx += 1
-                if idx > len(floors_by_spare) * 3:
-                    break
-                continue
-            targets[lvl] += 1
-            leftover -= 1
-            idx += 1
-
-    # Final check: actual total users we will place
-    final_total = sum(targets.values())
-    if final_total < TOTAL_USERS:
-        print(
-            f"⚠️ Capacity-limited: can only place {final_total} users "
-            f"(requested {TOTAL_USERS})"
-        )
 
     return targets
 
+def pick_best_ap(candidates):
+    band_rank = {"6": 3, "5": 2, "2.4": 1}
+    candidates.sort(key=lambda t: (-band_rank[t[1]["band"]], t[0]))
+    return candidates[0]
 
 def generate_users(aps):
-    """
-    Generate users such that:
-      • No AP exceeds max_clients
-      • No AP exceeds ~AIRTIME_UTILIZATION_SAFETY * airtime_capacity
-    """
     users = []
 
-    # Track per-AP state while placing users
     ap_state = {
-        ap["id"]: {
-            "ap": ap,
-            "user_count": 0,
-            "airtime_used": 0,
-        }
+        ap["id"]: {"ap": ap, "user_count": 0, "airtime_used": 0}
         for ap in aps
     }
 
-    # How many users we *aim* to place on each floor
     per_floor_target = compute_floor_targets(aps)
 
     for level, target_count in per_floor_target.items():
@@ -260,61 +228,40 @@ def generate_users(aps):
         rooms = floor["rooms"]
         aps_here = [ap for ap in aps if ap["floor"] == level]
 
-        # Filter out floors with no APs (shouldn't happen)
-        if not aps_here:
-            print(f"⚠️ No APs on floor {level}, skipping users there")
-            continue
-
-        placed_on_floor = 0
+        placed = 0
         attempts = 0
-        max_attempts = target_count * 10  # just in case
+        max_attempts = target_count * 15
 
-        while placed_on_floor < target_count and attempts < max_attempts:
+        while placed < target_count and attempts < max_attempts:
             attempts += 1
 
             room = random.choice(rooms)
             x, y = rand_point(room)
 
-            # Decide user's airtime usage
             airtime_usage = random.randint(1, 5)
 
-            # Among APs on this floor, choose one that:
-            #   - Has user_count < max_clients
-            #   - airtime_used + new_airtime <= safe_airtime
-            # and is closest in distance.
+            # 🔥 NOTICE: NO COVERAGE CHECK ANYMORE 🔥
             candidates = []
             for ap in aps_here:
                 st = ap_state[ap["id"]]
-                max_clients = ap.get("max_clients", 20)
 
-                # User-count capacity check
-                if st["user_count"] >= max_clients:
+                if st["user_count"] >= ap["max_clients"]:
                     continue
 
-                airtime_cap = ap.get("airtime_capacity", 100)
-                safe_airtime = airtime_cap * AIRTIME_UTILIZATION_SAFETY
-
-                # Airtime capacity check
-                if st["airtime_used"] + airtime_usage > safe_airtime:
+                safe_air = ap["airtime_capacity"] * AIRTIME_UTILIZATION_SAFETY
+                if st["airtime_used"] + airtime_usage > safe_air:
                     continue
 
                 d = dist((x, y), (ap["x"], ap["y"]))
                 candidates.append((d, ap, st))
 
             if not candidates:
-                # No AP on this floor can safely take more users
-                print(
-                    f"⚠️ Floor {level}: exhausted AP capacity after "
-                    f"{placed_on_floor} users (target {target_count})"
-                )
                 break
 
-            # Pick closest feasible AP
-            candidates.sort(key=lambda t: t[0])
-            _, best_ap, best_state = candidates[0]
+            _, best_ap, best_state = pick_best_ap(candidates)
 
             d_ap = dist((x, y), (best_ap["x"], best_ap["y"]))
-            rssi = rssi_from_dist(d_ap)
+            rssi = rssi_from_dist(d_ap, best_ap["band"])
 
             new_user = {
                 "id": f"User_{len(users)+1}",
@@ -323,33 +270,19 @@ def generate_users(aps):
                 "x": round(x, 2),
                 "y": round(y, 2),
                 "connected_ap": best_ap["id"],
-                "assigned_ap": best_ap["id"],  # matches simulator expectations
+                "assigned_ap": best_ap["id"],
                 "airtime_usage": airtime_usage,
                 "RSSI": rssi,
             }
 
             users.append(new_user)
 
-            # Update AP state
             best_state["user_count"] += 1
             best_state["airtime_used"] += airtime_usage
-            best_ap["client_count"] += 1
 
-            placed_on_floor += 1
-
-    # Final sanity log
-    print("\nPer-AP initial usage:")
-    for ap_id, st in ap_state.items():
-        ap = st["ap"]
-        print(
-            f"  {ap_id} (floor {ap['floor']}): "
-            f"users={st['user_count']}/{ap['max_clients']}, "
-            f"airtime={st['airtime_used']}/"
-            f"{int(ap['airtime_capacity'] * AIRTIME_UTILIZATION_SAFETY)} (safe)"
-        )
+            placed += 1
 
     return users
-
 
 # ---------------------------------------------------------
 # MAIN
@@ -367,11 +300,6 @@ def main():
     print("\n✔ DATA GENERATED SUCCESSFULLY")
     print("AP count:", len(aps))
     print("User count:", len(users))
-    print(
-        "Per-floor users:",
-        {lvl: sum(1 for u in users if u["floor"] == lvl) for lvl in FLOOR_DENSITY},
-    )
-
 
 if __name__ == "__main__":
     main()
